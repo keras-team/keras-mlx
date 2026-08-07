@@ -1,0 +1,73 @@
+name: Tests
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  release:
+    types: [created]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  run_cpu_tests:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+      fail-fast: false
+
+    name: Run tests on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+
+    env:
+      KERAS_HOME: ../keras-mlx/.github/workflows/config
+      # mlx JIT-compiles CPU kernels via g++, and as of 0.31.2 its generated
+      # code redeclares the _Float128/_Float64 builtins, which gcc 13+ rejects.
+      # Disable the JIT until the wheel ships compatible codegen.
+      MLX_DISABLE_COMPILE: 1
+
+    steps:
+      - name: Set up Python
+        if: ${{ matrix.os == 'macos-latest' }}
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.11'
+
+      - name: Checkout keras-mlx ${{ github.ref }}
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          path: keras-mlx
+          persist-credentials: false
+ 
+      - name: Checkout keras
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: keras-team/keras
+          ref: pluggable_backend
+          path: keras
+          persist-credentials: false
+ 
+      - name: Install Python dependencies
+        run: |
+          pip install -r keras/requirements-common.txt
+          pip install -r keras-mlx/requirements.txt
+
+      - name: Install keras-mlx
+        working-directory: ./keras-mlx
+        run: pip install -e .
+
+      - name: Verify installation
+        working-directory: ./keras
+        run: python -c "import keras; assert keras.backend.backend() == 'mlx'; import keras_mlx; print(keras_mlx.__version__)"
+
+      - name: Run Tests
+        working-directory: ./keras
+        run: pytest keras --tb=no --ignore keras/src/applications --ignore keras/src/wrappers
+
+      # TODO integration tests
