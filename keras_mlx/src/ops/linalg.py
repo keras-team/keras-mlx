@@ -120,13 +120,31 @@ def norm(x, ord=None, axis=None, keepdims=False):
     if "int" in dtype or dtype == "bool":
         dtype = dtypes.result_type(x.dtype, "float32")
     x = convert_to_tensor(x, dtype=dtype)
-    # TODO: swap to mlx.linalg.norm when it support singular value norms
-    # numpy cannot consume bfloat16 buffers, so compute in float32.
+    # mlx linalg kernels do not support bfloat16, compute in float32.
     if x.dtype == mx.bfloat16:
         x = x.astype(mx.float32)
-    x = np.array(x)
-    output = np.linalg.norm(x, ord=ord, axis=axis, keepdims=keepdims)
-    return mx.array(output)
+    # Singular value matrix norms are svd-based, which is CPU-only in mlx.
+    if isinstance(axis, (tuple, list)):
+        is_matrix_norm = True
+    else:
+        is_matrix_norm = axis is None and x.ndim == 2
+    try:
+        if is_matrix_norm and ord in (2, -2, "nuc"):
+            with mx.stream(mx.cpu):
+                output = mx.linalg.norm(
+                    x, ord=ord, axis=axis, keepdims=keepdims
+                )
+        else:
+            output = mx.linalg.norm(x, ord=ord, axis=axis, keepdims=keepdims)
+    except IndexError as e:
+        # Match the other backends, which raise a ValueError for an invalid
+        # axis instead of mlx's IndexError.
+        raise ValueError(str(e)) from e
+    if keepdims and axis is None and output.ndim != x.ndim:
+        # mlx flattens the input when axis is None and ord is None, losing
+        # the dimensions that numpy keeps with keepdims.
+        output = output.reshape((1,) * x.ndim)
+    return output
 
 
 def inv(a):
