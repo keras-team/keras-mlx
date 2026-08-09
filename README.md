@@ -13,7 +13,7 @@ branch.
 gh repo clone keras-team/keras
 cd keras
 git checkout pluggable_backend
-pip install -r requirements.txt
+pip install -r requirements-common.txt
 cd ..
 ```
 
