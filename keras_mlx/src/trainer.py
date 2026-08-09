@@ -1,5 +1,3 @@
-import collections
-import itertools
 import warnings
 
 import mlx.core as mx
@@ -16,7 +14,6 @@ from keras.src.trainers.data_adapters import data_adapter_utils
 from keras.src.trainers.epoch_iterator import EpochIterator
 from keras.src.utils import traceback_utils
 from keras.src.utils.python_utils import pythonify_logs
-
 from keras_mlx.src.ops.core import convert_to_numpy
 from keras_mlx.src.ops.core import convert_to_tensor
 
@@ -913,9 +910,7 @@ class MLXTrainer(base_trainer.Trainer):
         }
         self.mlx_state_sync()
         # TODO: This copies but we could avoid it
-        batch_outputs = tree.map_structure(
-            convert_to_numpy, batch_outputs
-        )
+        batch_outputs = tree.map_structure(convert_to_numpy, batch_outputs)
         return batch_outputs
 
 

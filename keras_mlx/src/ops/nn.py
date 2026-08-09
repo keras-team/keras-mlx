@@ -7,20 +7,22 @@ import mlx.nn as nn
 
 from keras.src.backend import result_type
 from keras.src.backend.common import standardize_dtype
+from keras.src.backend.common.backend_utils import (
+    _convert_conv_transpose_padding_args_from_keras_to_jax,
+)
 from keras.src.backend.common.backend_utils import canonicalize_axis
 from keras.src.backend.common.backend_utils import (
     compute_adaptive_pooling_window_sizes,
 )
 from keras.src.backend.config import epsilon
 from keras.src.backend.config import standardize_data_format
-from keras.src.backend.common.backend_utils import _convert_conv_transpose_padding_args_from_keras_to_jax
+from keras.src.utils.argument_validation import standardize_tuple
 from keras_mlx.src.ops.core import cast
 from keras_mlx.src.ops.core import convert_to_tensor
 from keras_mlx.src.ops.core import reverse_sequence
 from keras_mlx.src.ops.core import scan
 from keras_mlx.src.ops.core import to_mlx_dtype
 from keras_mlx.src.ops.numpy import flip
-from keras.src.utils.argument_validation import standardize_tuple
 
 
 def compute_conv_padding_args_for_mlx(

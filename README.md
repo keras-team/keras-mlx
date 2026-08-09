@@ -18,7 +18,7 @@ cd ..
 ```
 
 Assuming you have a fork of `keras-mlx`, you will run the following. This also
-also installs `keras-mlx` locally so that `keras` can find and import the
+installs `keras-mlx` locally so that `keras` can find and import the
 `keras-mlx` module.
 
 ```
@@ -33,5 +33,6 @@ Running tests happens from the root of the `keras` repository.
 
 ```
 cd keras
-KERAS_BACKEND=mlx pytest keras --ignore=keras/src/applications
+KERAS_BACKEND=mlx pytest keras --ignore=keras/src/applications \
+    --ignore=keras/src/wrappers
 ```

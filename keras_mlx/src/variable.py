@@ -1,5 +1,4 @@
 from keras.src.backend.common import KerasVariable
-
 from keras_mlx.src.ops.core import convert_to_numpy
 from keras_mlx.src.ops.core import convert_to_tensor
 

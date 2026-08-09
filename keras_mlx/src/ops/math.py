@@ -3,12 +3,12 @@ import math as python_math
 import mlx.core as mx
 import numpy as np
 
-from keras.src.backend.common import standardize_dtype
 from keras.src.backend.common import dtypes
+from keras.src.backend.common import standardize_dtype
 from keras.src.backend.common.backend_utils import canonicalize_axis
+from keras.src.utils.module_utils import scipy
 from keras_mlx.src.ops.core import convert_to_tensor
 from keras_mlx.src.ops.core import to_mlx_dtype
-from keras.src.utils.module_utils import scipy
 
 
 def _segment_reduction_fn(
