@@ -1956,17 +1956,15 @@ def geomspace(start, stop, num=50, endpoint=True, dtype=None, axis=0):
 
 
 def hamming(x):
-    x = convert_to_tensor(x)
-    return mx.array(np.hamming(int(_to_numpy(x)))).astype(
-        _mlx_result_dtype(config.floatx())
-    )
+    # The window length must be a Python int, mx.hamming does not accept
+    # scalar arrays for it.
+    return mx.hamming(int(x)).astype(to_mlx_dtype(config.floatx()))
 
 
 def hanning(x):
-    x = convert_to_tensor(x)
-    return mx.array(np.hanning(int(_to_numpy(x)))).astype(
-        _mlx_result_dtype(config.floatx())
-    )
+    # The window length must be a Python int, mx.hanning does not accept
+    # scalar arrays for it.
+    return mx.hanning(int(x)).astype(to_mlx_dtype(config.floatx()))
 
 
 def heaviside(x1, x2):
@@ -2028,12 +2026,12 @@ def isin(x1, x2, assume_unique=False, invert=False):
 
 def isneginf(x):
     x = convert_to_tensor(x)
-    return mx.array(np.isneginf(_to_numpy(x)))
+    return mx.isneginf(x)
 
 
 def isposinf(x):
     x = convert_to_tensor(x)
-    return mx.array(np.isposinf(_to_numpy(x)))
+    return mx.isposinf(x)
 
 
 def isreal(x):
@@ -2052,10 +2050,8 @@ def kaiser(x, beta):
 def kron(x1, x2):
     x1 = convert_to_tensor(x1)
     x2 = convert_to_tensor(x2)
-    dtype = dtypes.result_type(x1.dtype, x2.dtype)
-    return mx.array(np.kron(_to_numpy(x1), _to_numpy(x2))).astype(
-        _mlx_result_dtype(dtype)
-    )
+    dtype = _mlx_result_dtype(dtypes.result_type(x1.dtype, x2.dtype))
+    return mx.kron(x1.astype(dtype), x2.astype(dtype))
 
 
 def lcm(x1, x2):
@@ -2379,11 +2375,9 @@ def vander(x, N=None, increasing=False):
 
 def view(x, dtype=None):
     x = convert_to_tensor(x)
-    xn = _to_numpy(x)
     if dtype is None:
-        return mx.array(xn)
-    target = standardize_dtype(dtype)
-    return mx.array(xn.view(np.dtype(target)))
+        return x
+    return x.view(to_mlx_dtype(standardize_dtype(dtype)))
 
 
 def vsplit(x, indices_or_sections):
