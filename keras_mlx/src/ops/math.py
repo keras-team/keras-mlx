@@ -1,4 +1,4 @@
-import math
+import math as python_math
 
 import mlx.core as mx
 import numpy as np
@@ -156,7 +156,7 @@ def extract_sequences(x, sequence_length, sequence_stride):
 
     *batch_shape, signal_length = x.shape
     frames = (signal_length - sequence_length) // sequence_stride + 1
-    N = math.prod(batch_shape)
+    N = python_math.prod(batch_shape)
     x = mx.as_strided(
         x,
         shape=(N, frames, sequence_length),
@@ -262,7 +262,7 @@ def _stft(x, window, nperseg, noverlap, nfft, axis=-1):
     else:
         step = nperseg - noverlap
         batch_shape = list(batch_shape)
-        x = x.reshape((math.prod(batch_shape), signal_length, 1))
+        x = x.reshape((python_math.prod(batch_shape), signal_length, 1))
 
         result = _create_sliding_windows(x, nperseg, step)
         result = result.reshape(*batch_shape, result.shape[1], result.shape[2])
@@ -375,7 +375,7 @@ def _overlap_and_add(x, step_size):
         raise ValueError("Input must have (..., frames, frame_length) shape.")
 
     *batch_shape, nframes, segment_len = x.shape
-    flat_batchsize = math.prod(batch_shape)
+    flat_batchsize = python_math.prod(batch_shape)
     x = x.reshape((flat_batchsize, nframes, segment_len))
     output_size = step_size * (nframes - 1) + segment_len
     nstep_per_segment = 1 + (segment_len - 1) // step_size
@@ -550,7 +550,3 @@ def logdet(x):
     # slogdet is more numerically stable than log(det(x)) and avoids NaN for
     # negative determinants.
     return slogdet(x)[1]
-
-
-# Needed to avoid conflict with math ops.
-del math

@@ -45,7 +45,6 @@ LoadWeightsTests::test_load_weights_weights.h5_float64_bfloat16
 LoadWeightsTests::test_load_weights_weights.h5_float64_float16
 LoadWeightsTests::test_load_weights_weights.h5_float64_float32
 LoadWeightsTests::test_load_weights_weights.h5_float64_float64
-MathOpsCorrectnessTest::test_extract_sequences
 MathOpsCorrectnessTest::test_istft0
 MathOpsCorrectnessTest::test_istft1
 MathOpsCorrectnessTest::test_istft2
@@ -55,13 +54,6 @@ MathOpsCorrectnessTest::test_istft5
 MathOpsCorrectnessTest::test_istft6
 MathOpsCorrectnessTest::test_istft7
 MathOpsCorrectnessTest::test_istft8
-MathOpsCorrectnessTest::test_stft0
-MathOpsCorrectnessTest::test_stft1
-MathOpsCorrectnessTest::test_stft2
-MathOpsCorrectnessTest::test_stft3
-MathOpsCorrectnessTest::test_stft4
-MathOpsCorrectnessTest::test_stft5
-MathOpsCorrectnessTest::test_stft6
 MelSpectrogramTest::test_mel_spectrogram_basics
 MelSpectrogramTest::test_output_shape0
 MelSpectrogramTest::test_output_shape1
