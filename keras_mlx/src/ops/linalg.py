@@ -34,13 +34,17 @@ def det(a):
         return _det_2x2(a)
     elif len(a_shape) >= 2 and a_shape[-1] == 3 and a_shape[-2] == 3:
         return _det_3x3(a)
-    # TODO: Swap to mlx.linalg.det when supported.
-    # numpy cannot consume bfloat16 buffers, so compute in float32.
-    if a.dtype == mx.bfloat16:
+    # mlx cpu lapack kernels only support float32, compute there and
+    # cast back so all sizes return the input float dtype.
+    target = a.dtype
+    if a.dtype in (mx.bfloat16, mx.float16):
         a = a.astype(mx.float32)
-    a = np.array(a)
-    output = np.linalg.det(a)
-    return mx.array(output)
+    # mlx lu_factor aborts the whole process on an exactly singular
+    # input, so compute the determinant as the eigenvalue product, which
+    # handles singular matrices naturally.
+    with mx.stream(mx.cpu):
+        w = mx.linalg.eigvals(a)
+    return mx.real(mx.prod(w, axis=-1)).astype(target)
 
 
 def eig(a):
@@ -212,12 +216,20 @@ def matrix_power(a, n):
 def pinv(x, rcond=None):
     x = convert_to_tensor(x)
     target = x.dtype
-    # mlx pinv is svd-based and CPU-only, so fall back to numpy to match the
-    # reference rcond handling exactly.
+    # mlx cpu lapack kernels do not support bfloat16, compute in float32.
     if x.dtype == mx.bfloat16:
         x = x.astype(mx.float32)
-    result = np.linalg.pinv(np.asarray(x), rcond=rcond)
-    return mx.array(result).astype(target)
+    if rcond is None:
+        with mx.stream(mx.cpu):
+            return mx.linalg.pinv(x).astype(target)
+    # mlx pinv has no rcond parameter, build the pseudo inverse from the
+    # svd with the numpy cutoff rule.
+    u, s, vt = svd(x, full_matrices=False)
+    cutoff = rcond * mx.max(s, axis=-1, keepdims=True)
+    mask = s > cutoff
+    s_inv = mx.where(mask, 1 / mx.where(mask, s, 1), 0)
+    v_scaled = mx.swapaxes(vt, -1, -2) * mx.expand_dims(s_inv, -2)
+    return (v_scaled @ mx.swapaxes(u, -1, -2)).astype(target)
 
 
 def matrix_rank(x, tol=None):
@@ -227,10 +239,15 @@ def matrix_rank(x, tol=None):
             "Expected input to have rank >= 2. "
             f"Received input with shape {x.shape}."
         )
-    if x.dtype == mx.bfloat16:
+    # The mlx svd kernel only supports float32, compute there for every
+    # other input dtype, including integers.
+    if x.dtype != mx.float32:
         x = x.astype(mx.float32)
-    rank = np.linalg.matrix_rank(np.asarray(x), tol=tol)
-    return mx.array(rank.astype("int32"))
+    s = svd(x, compute_uv=False)
+    if tol is None:
+        eps = np.finfo(standardize_dtype(x.dtype)).eps
+        tol = mx.max(s, axis=-1, keepdims=True) * max(x.shape[-2:]) * eps
+    return mx.sum(s > tol, axis=-1).astype(mx.int32)
 
 
 def cholesky_inverse(a, upper=False):

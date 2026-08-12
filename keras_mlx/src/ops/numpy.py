@@ -1626,14 +1626,26 @@ def select(condlist, choicelist, default=0):
 
 
 def slogdet(x):
-    # TODO: Swap to mlx.linalg.slogdet when supported (or with determinant)
     x = convert_to_tensor(x)
-    # numpy cannot consume bfloat16 buffers, so compute in float32.
-    if x.dtype == mx.bfloat16:
+    # Integer input promotes to float32, and the mlx cpu lapack kernels
+    # only support float32, so compute there and cast back.
+    if "float" not in standardize_dtype(x.dtype):
         x = x.astype(mx.float32)
-    x = np.array(x)
-    output = np.linalg.slogdet(x)
-    return (mx.array(output[0]), mx.array(output[1]))
+    target = x.dtype
+    if x.dtype in (mx.bfloat16, mx.float16):
+        x = x.astype(mx.float32)
+    # mlx lu_factor aborts the whole process on an exactly singular
+    # input, so compute from the eigenvalues, which handle singular
+    # matrices naturally.
+    with mx.stream(mx.cpu):
+        w = mx.linalg.eigvals(x)
+    absw = mx.abs(w)
+    logabsdet = mx.sum(mx.log(absw), axis=-1)
+    # The unit eigenvalues cannot overflow and the real part of their
+    # product is the determinant sign. Zero eigenvalues zero it out.
+    unit = mx.where(absw > 0, w / absw.astype(mx.complex64), mx.array(0j))
+    sign = mx.round(mx.real(mx.prod(unit, axis=-1)))
+    return (sign.astype(target), logabsdet.astype(target))
 
 
 def vectorize(pyfunc, *, excluded=None, signature=None):
