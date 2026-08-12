@@ -102,13 +102,41 @@ def cdist(x, y):
 def erfc(x):
     x = convert_to_tensor(x)
     dtype = dtypes.result_type(x.dtype, float)
-    # mlx has no erfc primitive. Fall back to scipy, which keeps tail accuracy
-    # that a naive 1 - erf(x) would lose.
-    if x.dtype == mx.bfloat16:
-        x = x.astype(mx.float32)
-    return mx.array(scipy.special.erfc(np.asarray(x))).astype(
-        to_mlx_dtype(dtype)
+    # Chebyshev approximation from Numerical Recipes with fractional
+    # error below 1.2e-7 everywhere, unlike 1 - erf(x), which loses all
+    # precision in the tail.
+    x32 = x.astype(mx.float32)
+    # mx.abs has a zero subgradient at exactly zero, which would zero the
+    # erfc gradient there. The where based absolute value keeps it.
+    z = mx.where(x32 >= 0, x32, -x32)
+    t = 1 / (1 + z / 2)
+    poly = -1.26551223 + t * (
+        1.00002368
+        + t
+        * (
+            0.37409196
+            + t
+            * (
+                0.09678418
+                + t
+                * (
+                    -0.18628806
+                    + t
+                    * (
+                        0.27886807
+                        + t
+                        * (
+                            -1.13520398
+                            + t
+                            * (1.48851587 + t * (-0.82215223 + t * 0.17087277))
+                        )
+                    )
+                )
+            )
+        )
     )
+    result = t * mx.exp(-mx.square(z) + poly)
+    return mx.where(x32 >= 0, result, 2 - result).astype(to_mlx_dtype(dtype))
 
 
 def top_k(x, k, sorted=True):

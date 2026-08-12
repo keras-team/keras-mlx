@@ -2031,6 +2031,49 @@ def hypot(x1, x2):
     )
 
 
+def _i0_float32(ax):
+    # Abramowitz and Stegun 9.8.1 and 9.8.2 polynomial approximations of
+    # the modified Bessel function of order zero, on a non-negative
+    # float32 input. The absolute error is below 1.6e-7 for the small
+    # branch and the relative error below 1.9e-7 for the large branch.
+    t = mx.square(ax / 3.75)
+    small = 1 + t * (
+        3.5156229
+        + t
+        * (
+            3.0899424
+            + t
+            * (1.2067492 + t * (0.2659732 + t * (0.0360768 + t * 0.0045813)))
+        )
+    )
+    # Substitute a safe value where the small branch is selected to keep
+    # the division and exp well defined.
+    ax_safe = mx.maximum(ax, 3.75)
+    t = 3.75 / ax_safe
+    poly = 0.39894228 + t * (
+        0.01328592
+        + t
+        * (
+            0.00225319
+            + t
+            * (
+                -0.00157565
+                + t
+                * (
+                    0.00916281
+                    + t
+                    * (
+                        -0.02057706
+                        + t * (0.02635537 + t * (-0.01647633 + t * 0.00392377))
+                    )
+                )
+            )
+        )
+    )
+    large = mx.exp(ax_safe) / mx.sqrt(ax_safe) * poly
+    return mx.where(ax <= 3.75, small, large)
+
+
 def i0(x):
     x = convert_to_tensor(x)
     sd = standardize_dtype(x.dtype)
@@ -2039,8 +2082,8 @@ def i0(x):
         if sd in ("int64", "float64")
         else dtypes.result_type(x.dtype, float)
     )
-    x = x.astype(_mlx_result_dtype(dtype))
-    return mx.array(np.i0(_to_numpy(x))).astype(_mlx_result_dtype(dtype))
+    result = _i0_float32(mx.abs(x.astype(mx.float32)))
+    return result.astype(_mlx_result_dtype(dtype))
 
 
 def isin(x1, x2, assume_unique=False, invert=False):
@@ -2072,11 +2115,16 @@ def isreal(x):
 
 
 def kaiser(x, beta):
-    x = convert_to_tensor(x)
-    beta = float(_to_numpy(convert_to_tensor(beta)))
-    return mx.array(np.kaiser(int(_to_numpy(x)), beta)).astype(
-        _mlx_result_dtype(config.floatx())
-    )
+    n = int(x)
+    # i0 is even, so the window only depends on the magnitude of beta.
+    beta = builtins.abs(float(beta))
+    dtype = to_mlx_dtype(config.floatx())
+    if n == 1:
+        return mx.ones(1, dtype=dtype)
+    k = mx.arange(n, dtype=mx.float32)
+    alpha = (n - 1) / 2
+    arg = beta * mx.sqrt(mx.maximum(1 - mx.square((k - alpha) / alpha), 0))
+    return (_i0_float32(arg) / _i0_float32(mx.array(beta))).astype(dtype)
 
 
 def kron(x1, x2):
@@ -2315,8 +2363,29 @@ def nextafter(x1, x2):
     x1 = convert_to_tensor(x1)
     x2 = convert_to_tensor(x2)
     dtype = dtypes.result_type(x1.dtype, x2.dtype, float)
-    return mx.array(np.nextafter(_to_numpy(x1), _to_numpy(x2))).astype(
-        _mlx_result_dtype(dtype)
+    mlx_dtype = _mlx_result_dtype(dtype)
+    x1 = x1.astype(mlx_dtype)
+    x2 = x2.astype(mlx_dtype)
+    if mlx_dtype in (mx.float16, mx.bfloat16):
+        int_dtype, int_min = mx.int16, -(2**15)
+    else:
+        int_dtype, int_min = mx.int32, -(2**31)
+
+    # Map the float bit patterns to integers whose ordering matches the
+    # float ordering, step one integer towards the target, and map back.
+    # This map is its own inverse and sends both zeros to the same key.
+    def to_key(value):
+        bits = value.view(int_dtype)
+        return mx.where(bits < 0, int_min - bits, bits)
+
+    key1 = to_key(x1)
+    key2 = to_key(x2)
+    step = (key2 > key1).astype(int_dtype) - (key2 < key1).astype(int_dtype)
+    new_key = key1 + step
+    new_bits = mx.where(new_key < 0, int_min - new_key, new_key)
+    result = new_bits.astype(int_dtype).view(mlx_dtype)
+    return mx.where(
+        mx.isnan(x1) | mx.isnan(x2), _nan_scalar(result.dtype), result
     )
 
 
