@@ -1942,9 +1942,26 @@ def gcd(x1, x2):
     x1 = convert_to_tensor(x1)
     x2 = convert_to_tensor(x2)
     dtype = dtypes.result_type(x1.dtype, x2.dtype)
-    return mx.array(np.gcd(_to_numpy(x1), _to_numpy(x2))).astype(
-        _mlx_result_dtype(dtype)
-    )
+    if standardize_dtype(dtype) not in dtypes.INT_TYPES:
+        raise TypeError(
+            "gcd requires integer arguments. "
+            f"Received: x1 dtype={x1.dtype}, x2 dtype={x2.dtype}"
+        )
+    mlx_dtype = _mlx_result_dtype(dtype)
+    a = mx.abs(x1.astype(mlx_dtype))
+    b = mx.abs(x2.astype(mlx_dtype))
+    # Masked elementwise Euclid with a fixed iteration count, so the loop
+    # unrolls into a static graph. The worst case is a consecutive
+    # Fibonacci pair, which needs about 1.44 * log2(max) iterations.
+    iterations = 92 if standardize_dtype(dtype) in ("int64", "uint64") else 48
+    for _ in range(iterations):
+        nonzero = b != 0
+        b_safe = mx.where(nonzero, b, 1)
+        a, b = (
+            mx.where(nonzero, b, a),
+            mx.where(nonzero, mx.remainder(a, b_safe), 0),
+        )
+    return a
 
 
 def geomspace(start, stop, num=50, endpoint=True, dtype=None, axis=0):
@@ -2055,12 +2072,12 @@ def kron(x1, x2):
 
 
 def lcm(x1, x2):
-    x1 = convert_to_tensor(x1)
-    x2 = convert_to_tensor(x2)
-    dtype = dtypes.result_type(x1.dtype, x2.dtype)
-    return mx.array(np.lcm(_to_numpy(x1), _to_numpy(x2))).astype(
-        _mlx_result_dtype(dtype)
-    )
+    g = gcd(x1, x2)
+    a = mx.abs(convert_to_tensor(x1).astype(g.dtype))
+    b = mx.abs(convert_to_tensor(x2).astype(g.dtype))
+    g_safe = mx.where(g == 0, 1, g)
+    # Divide before multiplying to keep the intermediate small.
+    return mx.where(g == 0, 0, (a // g_safe) * b)
 
 
 def ldexp(x1, x2):
