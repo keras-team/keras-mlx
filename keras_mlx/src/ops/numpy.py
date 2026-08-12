@@ -1485,19 +1485,22 @@ def vectorize(pyfunc, *, excluded=None, signature=None):
 
 def histogram_bin_edges(a, bins=10, range=None):
     # Ref: jax.numpy.histogram
-    # infer range if None
+    # Keep the range as arrays so the op stays traceable under
+    # mx.compile, calling .item() would force an eval mid-trace.
     if range is None:
-        range = (mx.min(a).item(), mx.max(a).item())
-
-    if range[0] == range[1]:
-        range = (range[0] - 0.5, range[1] + 0.5)
-
-    bin_edges = mx.linspace(range[0], range[1], bins + 1, dtype=mx.float32)
-    # due to the way mlx currently handles linspace
-    # with fp32 precision it is not always right edge inclusive
-    # manually set the right edge for now
-    bin_edges[-1] = range[-1]
-    return bin_edges
+        low = mx.min(a).astype(mx.float32)
+        high = mx.max(a).astype(mx.float32)
+    else:
+        low = mx.array(range[0], dtype=mx.float32)
+        high = mx.array(range[1], dtype=mx.float32)
+    degenerate = low == high
+    low = mx.where(degenerate, low - 0.5, low)
+    high = mx.where(degenerate, high + 0.5, high)
+    steps = mx.arange(bins + 1, dtype=mx.float32) / bins
+    bin_edges = low + steps * (high - low)
+    # Set the right edge exactly, the interpolation above can fall short
+    # of it in float32.
+    return mx.concatenate([bin_edges[:-1], high.reshape(1)])
 
 
 def histogram(x, bins=10, range=None):
