@@ -940,14 +940,63 @@ def ndim(x):
     return x.ndim
 
 
+def _unique_prepare(elements, ndim):
+    # Sort the elements (rows lexicographically when ndim is 2) with a
+    # stable order and mark the start of each group of equal elements.
+    # The first occurrence semantics of return_index, and the
+    # lexicographic row sort below, both rely on mx.argsort being
+    # stable, which matches numpy and jax.
+    n = elements.shape[0]
+    if ndim == 1:
+        order = argsort(elements)
+    else:
+        # Iterated stable argsort from the least to the most significant
+        # column is a lexicographic sort.
+        order = mx.arange(n, dtype=mx.int32)
+        for col in range(elements.shape[1] - 1, -1, -1):
+            keys = mx.take(elements[:, col], order)
+            order = mx.take(order, argsort(keys))
+    sorted_elements = mx.take(elements, order, axis=0)
+    if n == 0:
+        is_new = mx.zeros(0, dtype=mx.bool_)
+    else:
+        if ndim == 1:
+            differs = sorted_elements[1:] != sorted_elements[:-1]
+        else:
+            differs = mx.any(
+                sorted_elements[1:] != sorted_elements[:-1], axis=1
+            )
+        # A nan is not equal to itself, so every nan opens a new group,
+        # matching numpy with equal_nan=False.
+        is_new = mx.concatenate([mx.array([True]), differs])
+    # The group count determines the output shape, so this op is eager
+    # only, like on every other backend.
+    num = int(mx.sum(is_new))
+    new_pos = argsort(mx.logical_not(is_new))[:num]
+    return order, sorted_elements, is_new, new_pos, n
+
+
+# The sorted argument is accepted for API consistency but not forwarded,
+# the implementation always returns sorted unique values.
 def nonzero(x):
-    # TODO: swap to mlx when nonzero is implemented
     x = convert_to_tensor(x)
-    if x.dtype == mx.bfloat16:
-        x = x.astype(mx.float32)
-    x = np.array(x)
-    output = np.nonzero(x)
-    return tuple(mx.array(x).astype(mx.int32) for x in output)
+    flat_mask = (x != 0).reshape(-1)
+    # The number of nonzero entries determines the output shape, so this
+    # op is eager only, like on every other backend. A stable argsort
+    # moves the flat indices of the nonzero entries to the front in
+    # ascending order.
+    count = int(mx.sum(flat_mask))
+    flat_idx = argsort(mx.logical_not(flat_mask))[:count]
+    strides = []
+    stride = 1
+    for dim_size in reversed(x.shape):
+        strides.append(stride)
+        stride *= dim_size
+    strides = list(reversed(strides))
+    return tuple(
+        ((flat_idx // stride) % dim_size).astype(mx.int32)
+        for dim_size, stride in zip(x.shape, strides)
+    )
 
 
 def not_equal(x1, x2):
@@ -2606,52 +2655,74 @@ def unique(
     fill_value=None,
 ):
     x = convert_to_tensor(x)
-    xn = _to_numpy(x)
-    # np.unique always sorts in versions < 2.3.0. We accept the `sorted`
-    # argument for API consistency but do not forward it to np.unique to
-    # avoid a TypeError on older numpy.
-    output = np.unique(
-        xn,
-        return_index=return_index,
-        return_inverse=return_inverse,
-        return_counts=return_counts,
-        axis=axis,
-        equal_nan=False,
-    )
-
-    if not (return_index or return_inverse or return_counts):
-        output = [output]
+    if axis is None:
+        dim = 0
+        flat = x.reshape(-1)
+        order, sorted_x, is_new, new_pos, n = _unique_prepare(flat, 1)
+        values = mx.take(sorted_x, new_pos)
     else:
-        output = list(output)
-
-    values = output[0]
+        dim = axis % x.ndim
+        moved = mx.moveaxis(x, dim, 0)
+        # An explicit row length also covers empty arrays, where mlx
+        # cannot infer a -1 dimension.
+        row_len = 1
+        for extent in moved.shape[1:]:
+            row_len *= extent
+        rows = moved.reshape(moved.shape[0], row_len)
+        order, sorted_rows, is_new, new_pos, n = _unique_prepare(rows, 2)
+        num = new_pos.shape[0]
+        values = mx.moveaxis(
+            mx.take(sorted_rows, new_pos, axis=0).reshape(
+                (num,) + moved.shape[1:]
+            ),
+            0,
+            dim,
+        )
+    outputs = [values]
+    if return_index:
+        # Stability of the sort makes this the first occurrence.
+        outputs.append(mx.take(order, new_pos).astype(mx.int32))
+    if return_inverse:
+        group = mx.cumsum(is_new.astype(mx.int32)) - 1
+        inverse = mx.take(group, mx.argsort(order))
+        if axis is None:
+            inverse = inverse.reshape(x.shape)
+        outputs.append(inverse.astype(mx.int32))
+    if return_counts:
+        boundaries = mx.concatenate(
+            [new_pos.astype(mx.int32), mx.array([n], dtype=mx.int32)]
+        )
+        outputs.append(boundaries[1:] - boundaries[:-1])
 
     if size is not None:
-        dim = 0 if axis is None else (axis % x.ndim)
         values_count = values.shape[dim]
         if values_count > size:
-            indices = [builtins.slice(None)] * values.ndim
-            indices[dim] = builtins.slice(0, size)
-            values = values[tuple(indices)]
+            keep = [builtins.slice(None)] * values.ndim
+            keep[dim] = builtins.slice(0, size)
+            outputs[0] = values[tuple(keep)]
             if return_counts:
-                output[-1] = output[-1][indices[dim]]
+                outputs[-1] = outputs[-1][:size]
             if return_index:
-                output[1] = output[1][indices[dim]]
+                outputs[1] = outputs[1][:size]
         elif values_count < size:
-            pad_width = [(0, 0)] * values.ndim
-            pad_width[dim] = (0, size - values_count)
+            pad = size - values_count
             fill = 0 if fill_value is None else fill_value
-            values = np.pad(values, pad_width, constant_values=fill)
+            pad_shape = list(values.shape)
+            pad_shape[dim] = pad
+            outputs[0] = mx.concatenate(
+                [values, mx.full(pad_shape, fill, dtype=values.dtype)],
+                axis=dim,
+            )
             if return_counts:
-                output[-1] = np.pad(
-                    output[-1], pad_width[dim], constant_values=0
+                outputs[-1] = mx.concatenate(
+                    [outputs[-1], mx.zeros(pad, dtype=mx.int32)]
                 )
             if return_index:
-                output[1] = np.pad(output[1], pad_width[dim], constant_values=1)
+                outputs[1] = mx.concatenate(
+                    [outputs[1], mx.ones(pad, dtype=mx.int32)]
+                )
 
-    output[0] = values
-    output = [mx.array(o) for o in output]
-    return output[0] if len(output) == 1 else tuple(output)
+    return outputs[0] if len(outputs) == 1 else tuple(outputs)
 
 
 def vander(x, N=None, increasing=False):
