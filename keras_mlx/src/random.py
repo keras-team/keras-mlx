@@ -3,11 +3,11 @@ import math
 import mlx.core as mx
 
 from keras.src.backend.config import floatx
-from keras_mlx.src.ops.core import convert_to_tensor
-from keras_mlx.src.ops.core import to_mlx_dtype
 from keras.src.random.seed_generator import SeedGenerator  # noqa: F401
 from keras.src.random.seed_generator import draw_seed
 from keras.src.random.seed_generator import make_default_seed  # noqa: F401
+from keras_mlx.src.ops.core import convert_to_tensor
+from keras_mlx.src.ops.core import to_mlx_dtype
 
 
 def mlx_draw_seed(seed):

@@ -14,7 +14,6 @@ from keras.src.backend.common.keras_tensor import KerasTensor
 from keras.src.backend.common.stateless_scope import StatelessScope
 from keras.src.backend.common.symbolic_scope import SymbolicScope
 
-
 try:
     import h5py
 except ImportError:

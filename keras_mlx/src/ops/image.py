@@ -4,11 +4,10 @@ import operator
 
 import mlx.core as mx
 
-from keras.src.backend.config import standardize_data_format
+from keras.src.backend.common.dtypes import result_type
 from keras.src.backend.common.variables import is_float_dtype
 from keras.src.backend.common.variables import standardize_dtype
-from keras.src.backend.common.dtypes import result_type
-
+from keras.src.backend.config import standardize_data_format
 from keras_mlx.src.ops.core import convert_to_tensor
 from keras_mlx.src.ops.core import to_mlx_dtype
 from keras_mlx.src.random import mlx_draw_seed
