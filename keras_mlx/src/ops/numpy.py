@@ -1938,13 +1938,13 @@ def fmod(x1, x2):
     return mx.array(np.fmod(_to_numpy(x1), _to_numpy(x2))).astype(mlx_dtype)
 
 
-def gcd(x1, x2):
-    x1 = convert_to_tensor(x1)
-    x2 = convert_to_tensor(x2)
+def _gcd(op_name, x1, x2):
+    # Shared by gcd and lcm, which take already converted tensors. op_name
+    # is only there so the dtype error names the op the caller invoked.
     dtype = dtypes.result_type(x1.dtype, x2.dtype)
     if standardize_dtype(dtype) not in dtypes.INT_TYPES:
         raise TypeError(
-            "gcd requires integer arguments. "
+            f"{op_name} requires integer arguments. "
             f"Received: x1 dtype={x1.dtype}, x2 dtype={x2.dtype}"
         )
     mlx_dtype = _mlx_result_dtype(dtype)
@@ -1962,6 +1962,12 @@ def gcd(x1, x2):
             mx.where(nonzero, mx.remainder(a, b_safe), 0),
         )
     return a
+
+
+def gcd(x1, x2):
+    x1 = convert_to_tensor(x1)
+    x2 = convert_to_tensor(x2)
+    return _gcd("gcd", x1, x2)
 
 
 def geomspace(start, stop, num=50, endpoint=True, dtype=None, axis=0):
@@ -2072,9 +2078,11 @@ def kron(x1, x2):
 
 
 def lcm(x1, x2):
-    g = gcd(x1, x2)
-    a = mx.abs(convert_to_tensor(x1).astype(g.dtype))
-    b = mx.abs(convert_to_tensor(x2).astype(g.dtype))
+    x1 = convert_to_tensor(x1)
+    x2 = convert_to_tensor(x2)
+    g = _gcd("lcm", x1, x2)
+    a = mx.abs(x1.astype(g.dtype))
+    b = mx.abs(x2.astype(g.dtype))
     g_safe = mx.where(g == 0, 1, g)
     # Divide before multiplying to keep the intermediate small.
     return mx.where(g == 0, 0, (a // g_safe) * b)
