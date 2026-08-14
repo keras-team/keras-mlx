@@ -1487,12 +1487,13 @@ def histogram_bin_edges(a, bins=10, range=None):
     # Ref: jax.numpy.histogram
     # Keep the range as arrays so the op stays traceable under
     # mx.compile, calling .item() would force an eval mid-trace.
+    a = convert_to_tensor(a)
     if range is None:
         low = mx.min(a).astype(mx.float32)
         high = mx.max(a).astype(mx.float32)
     else:
-        low = mx.array(range[0], dtype=mx.float32)
-        high = mx.array(range[1], dtype=mx.float32)
+        low = convert_to_tensor(range[0], dtype="float32")
+        high = convert_to_tensor(range[1], dtype="float32")
     degenerate = low == high
     low = mx.where(degenerate, low - 0.5, low)
     high = mx.where(degenerate, high + 0.5, high)
