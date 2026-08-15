@@ -773,12 +773,6 @@ def less_equal(x1, x2):
 def linspace(
     start, stop, num=50, endpoint=True, retstep=False, dtype=None, axis=0
 ):
-    if axis != 0:
-        raise NotImplementedError(
-            "MLX doesn't support linspace with `axis` argument"
-            f"Received axis={axis}"
-        )
-
     start = convert_to_tensor(start)
     stop = convert_to_tensor(stop)
     if dtype is None:
@@ -805,6 +799,10 @@ def linspace(
 
     if not endpoint:
         result = result[:-1]
+
+    if axis != 0:
+        # The samples are generated along axis 0, numpy places them at `axis`.
+        result = mx.moveaxis(result, 0, axis)
 
     if retstep:
         step = (stop - start) / (num - 1 if endpoint else num)
@@ -855,12 +853,9 @@ def logical_or(x1, x2):
 
 
 def logspace(start, stop, num=50, endpoint=True, base=10, dtype=None, axis=0):
-    if axis != 0:
-        raise NotImplementedError(
-            "MLX logspace does not support an `axis` argument. "
-            f"Received axis={axis}"
-        )
-    points = linspace(start, stop, num, endpoint=endpoint, dtype=dtype)
+    points = linspace(
+        start, stop, num, endpoint=endpoint, dtype=dtype, axis=axis
+    )
     return mx.power(base, points)
 
 
