@@ -2160,7 +2160,7 @@ def nanmax(x, axis=None, keepdims=False):
         return max(x, axis=axis, keepdims=keepdims)
     axis = _np_axis(axis)
     filled, all_nan = _nan_mask_fill(x, axis, keepdims, -mx.inf)
-    result = mx.max(filled, axis=axis, keepdims=keepdims)
+    result = max(filled, axis=axis, keepdims=keepdims)
     return mx.where(all_nan, _nan_scalar(result.dtype), result).astype(x.dtype)
 
 
@@ -2195,7 +2195,7 @@ def nanmin(x, axis=None, keepdims=False):
         return min(x, axis=axis, keepdims=keepdims)
     axis = _np_axis(axis)
     filled, all_nan = _nan_mask_fill(x, axis, keepdims, mx.inf)
-    result = mx.min(filled, axis=axis, keepdims=keepdims)
+    result = min(filled, axis=axis, keepdims=keepdims)
     return mx.where(all_nan, _nan_scalar(result.dtype), result).astype(x.dtype)
 
 
