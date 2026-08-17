@@ -22,6 +22,13 @@ def _sampling_stream(dtype):
     return mx.cpu if dtype == mx.float64 else mx.default_device()
 
 
+def _sampling_dtype(dtype):
+    # The uniform sampler mlx builds on rejects float64 on every stream, so
+    # draw float32 and widen afterwards. The mlx generator is 32 bit, so no
+    # float64 sampler here would carry a full mantissa of randomness anyway.
+    return mx.float32 if dtype == mx.float64 else dtype
+
+
 def normal(shape, mean=0.0, stddev=1.0, dtype=None, seed=None):
     dtype = dtype or floatx()
     dtype = to_mlx_dtype(dtype)
@@ -37,9 +44,14 @@ def uniform(shape, minval=0.0, maxval=1.0, dtype=None, seed=None):
     dtype = to_mlx_dtype(dtype)
     seed = mlx_draw_seed(seed)
     with mx.stream(_sampling_stream(dtype)):
-        return mx.random.uniform(
-            low=minval, high=maxval, shape=shape, dtype=dtype, key=seed
+        sample = mx.random.uniform(
+            low=minval,
+            high=maxval,
+            shape=shape,
+            dtype=_sampling_dtype(dtype),
+            key=seed,
         )
+        return sample.astype(dtype)
 
 
 def categorical(logits, num_samples, dtype="int32", seed=None):
@@ -64,9 +76,13 @@ def truncated_normal(shape, mean=0.0, stddev=1.0, dtype=None, seed=None):
     seed = mlx_draw_seed(seed)
     with mx.stream(_sampling_stream(dtype)):
         sample = mx.random.truncated_normal(
-            lower=-2.0, upper=2.0, shape=shape, dtype=dtype, key=seed
+            lower=-2.0,
+            upper=2.0,
+            shape=shape,
+            dtype=_sampling_dtype(dtype),
+            key=seed,
         )
-        return sample * stddev + mean
+        return (sample * stddev + mean).astype(dtype)
 
 
 def _get_concrete_noise_shape(inputs, noise_shape):
