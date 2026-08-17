@@ -17,13 +17,16 @@ def mlx_draw_seed(seed):
         return draw_seed(seed)
 
 
+def _sampling_stream(dtype):
+    # float64 sampling is not supported on the GPU stream.
+    return mx.cpu if dtype == mx.float64 else mx.default_device()
+
+
 def normal(shape, mean=0.0, stddev=1.0, dtype=None, seed=None):
     dtype = dtype or floatx()
     dtype = to_mlx_dtype(dtype)
     seed = mlx_draw_seed(seed)
-    # float64 sampling is not supported on the GPU stream.
-    stream = mx.cpu if dtype == mx.float64 else mx.default_device()
-    with mx.stream(stream):
+    with mx.stream(_sampling_stream(dtype)):
         return mx.random.normal(
             shape=shape, loc=mean, scale=stddev, dtype=dtype, key=seed
         )
@@ -33,9 +36,10 @@ def uniform(shape, minval=0.0, maxval=1.0, dtype=None, seed=None):
     dtype = dtype or floatx()
     dtype = to_mlx_dtype(dtype)
     seed = mlx_draw_seed(seed)
-    return mx.random.uniform(
-        low=minval, high=maxval, shape=shape, dtype=dtype, key=seed
-    )
+    with mx.stream(_sampling_stream(dtype)):
+        return mx.random.uniform(
+            low=minval, high=maxval, shape=shape, dtype=dtype, key=seed
+        )
 
 
 def categorical(logits, num_samples, dtype="int32", seed=None):
@@ -58,10 +62,11 @@ def truncated_normal(shape, mean=0.0, stddev=1.0, dtype=None, seed=None):
     dtype = dtype or floatx()
     dtype = to_mlx_dtype(dtype)
     seed = mlx_draw_seed(seed)
-    sample = mx.random.truncated_normal(
-        lower=-2.0, upper=2.0, shape=shape, dtype=dtype, key=seed
-    )
-    return sample * stddev + mean
+    with mx.stream(_sampling_stream(dtype)):
+        sample = mx.random.truncated_normal(
+            lower=-2.0, upper=2.0, shape=shape, dtype=dtype, key=seed
+        )
+        return sample * stddev + mean
 
 
 def _get_concrete_noise_shape(inputs, noise_shape):
