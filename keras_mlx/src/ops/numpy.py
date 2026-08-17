@@ -1,4 +1,5 @@
 import builtins
+import math
 from copy import copy as builtin_copy
 
 import mlx.core as mx
@@ -1558,8 +1559,6 @@ def unravel_index(indices, shape):
 
 
 def searchsorted_binary(a, b, side="left"):
-    import math
-
     original_shape = b.shape
     b_flat = b.reshape(-1)
 
@@ -1847,8 +1846,6 @@ def corrcoef(x):
 
 
 def deg2rad(x):
-    import math
-
     x = convert_to_tensor(x)
     sd = standardize_dtype(x.dtype)
     if sd in ("int64", "float64"):
@@ -2281,8 +2278,6 @@ def ptp(x, axis=None, keepdims=False):
 
 
 def rad2deg(x):
-    import math
-
     x = convert_to_tensor(x)
     sd = standardize_dtype(x.dtype)
     if sd in ("int64", "float64"):
