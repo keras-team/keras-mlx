@@ -267,6 +267,9 @@ def argmin(x, axis=None, keepdims=False):
 def argsort(x, axis=-1):
     x = convert_to_tensor(x)
     axis = None if x.ndim == 0 else axis
+    # Metal has no bool sort kernel, sort bool keys as int8.
+    if x.dtype == mx.bool_:
+        x = x.astype(mx.int8)
     # cast to int32 to align with other backends
     return mx.argsort(x, axis=axis).astype(mx.int32)
 
@@ -1135,6 +1138,9 @@ def size(x):
 
 def sort(x, axis=-1):
     x = convert_to_tensor(x)
+    # Metal has no bool sort kernel, sort bool values as int8.
+    if x.dtype == mx.bool_:
+        return mx.sort(x.astype(mx.int8), axis=axis).astype(mx.bool_)
     return mx.sort(x, axis=axis)
 
 
