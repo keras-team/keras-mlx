@@ -1951,9 +1951,10 @@ def _integer_result_dtype(op_name, x1, x2):
     return dtype
 
 
-def _gcd(x1, x2, dtype):
-    # Shared by gcd and lcm, which pass already converted tensors and the
-    # integer dtype validated by _integer_result_dtype.
+def gcd(x1, x2):
+    x1 = convert_to_tensor(x1)
+    x2 = convert_to_tensor(x2)
+    dtype = _integer_result_dtype("gcd", x1, x2)
     mlx_dtype = _mlx_result_dtype(dtype)
     a = mx.abs(x1.astype(mlx_dtype))
     b = mx.abs(x2.astype(mlx_dtype))
@@ -1969,12 +1970,6 @@ def _gcd(x1, x2, dtype):
             mx.where(nonzero, mx.remainder(a, b_safe), 0),
         )
     return a
-
-
-def gcd(x1, x2):
-    x1 = convert_to_tensor(x1)
-    x2 = convert_to_tensor(x2)
-    return _gcd(x1, x2, _integer_result_dtype("gcd", x1, x2))
 
 
 def geomspace(start, stop, num=50, endpoint=True, dtype=None, axis=0):
@@ -2087,7 +2082,9 @@ def kron(x1, x2):
 def lcm(x1, x2):
     x1 = convert_to_tensor(x1)
     x2 = convert_to_tensor(x2)
-    g = _gcd(x1, x2, _integer_result_dtype("lcm", x1, x2))
+    # Validate here so a non-integer dtype names lcm rather than gcd.
+    _integer_result_dtype("lcm", x1, x2)
+    g = gcd(x1, x2)
     a = mx.abs(x1.astype(g.dtype))
     b = mx.abs(x2.astype(g.dtype))
     g_safe = mx.where(g == 0, 1, g)
