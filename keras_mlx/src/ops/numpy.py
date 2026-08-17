@@ -2122,67 +2122,99 @@ def logaddexp2(x1, x2):
     )
 
 
+def _nan_scalar(dtype):
+    # A nan scalar as a materialized array. Baking nan into a fused
+    # kernel as a literal breaks the mlx 0.31 Metal codegen under
+    # mx.compile.
+    return mx.full((), mx.nan, dtype=dtype)
+
+
+def _nan_mask_fill(x, axis, keepdims, fill):
+    # Replace nans with a fill value that is neutral for the following
+    # reduction and report which slices were all nan.
+    nan_mask = mx.isnan(x)
+    filled = mx.where(nan_mask, fill, x)
+    all_nan = mx.all(nan_mask, axis=axis, keepdims=keepdims)
+    return filled, all_nan
+
+
+def _nanvar_compute(x, axis, keepdims):
+    # Masked two pass variance in the float32 compute dtype.
+    compute_dtype = dtypes.result_type(x.dtype, "float32")
+    x = x.astype(_mlx_result_dtype(compute_dtype))
+    axis = _np_axis(axis)
+    nan_mask = mx.isnan(x)
+    counts = mx.sum(
+        mx.logical_not(nan_mask).astype(x.dtype), axis=axis, keepdims=True
+    )
+    means = mx.sum(mx.where(nan_mask, 0, x), axis=axis, keepdims=True) / counts
+    squares = mx.where(nan_mask, 0, mx.square(x - means))
+    result = mx.sum(squares, axis=axis, keepdims=True) / counts
+    if not keepdims:
+        result = mx.squeeze(result, axis=axis)
+    return result
+
+
 def nanargmax(x, axis=None, keepdims=False):
     x = convert_to_tensor(x)
-    xn = _to_numpy(x)
-    if not np.issubdtype(xn.dtype, np.floating):
+    if "float" not in standardize_dtype(x.dtype):
         return argmax(x, axis=axis, keepdims=keepdims)
-    nan_mask = np.isnan(xn)
-    result = np.where(
-        np.all(nan_mask, axis=axis, keepdims=keepdims),
-        -1,
-        np.nanargmax(
-            np.where(nan_mask, -np.inf, xn), axis=axis, keepdims=keepdims
-        ).astype("int32"),
-    )
-    return mx.array(result)
+    filled, all_nan = _nan_mask_fill(x, _np_axis(axis), keepdims, -mx.inf)
+    result = argmax(filled, axis=axis, keepdims=keepdims)
+    # Match jax, which returns -1 for an all-nan slice.
+    return mx.where(all_nan, -1, result)
 
 
 def nanargmin(x, axis=None, keepdims=False):
     x = convert_to_tensor(x)
-    xn = _to_numpy(x)
-    if not np.issubdtype(xn.dtype, np.floating):
+    if "float" not in standardize_dtype(x.dtype):
         return argmin(x, axis=axis, keepdims=keepdims)
-    nan_mask = np.isnan(xn)
-    result = np.where(
-        np.all(nan_mask, axis=axis, keepdims=keepdims),
-        -1,
-        np.nanargmin(
-            np.where(nan_mask, np.inf, xn), axis=axis, keepdims=keepdims
-        ).astype("int32"),
-    )
-    return mx.array(result)
+    filled, all_nan = _nan_mask_fill(x, _np_axis(axis), keepdims, mx.inf)
+    result = argmin(filled, axis=axis, keepdims=keepdims)
+    # Match jax, which returns -1 for an all-nan slice.
+    return mx.where(all_nan, -1, result)
 
 
 def nancumprod(x, axis=None, dtype=None):
     x = convert_to_tensor(x)
-    dtype = dtypes.result_type(dtype or x.dtype)
-    if dtype == "bool":
-        dtype = "int32"
-    result = np.nancumprod(_to_numpy(x), axis=_np_axis(axis), dtype=dtype)
-    return mx.array(result).astype(_mlx_result_dtype(dtype))
+    if "float" in standardize_dtype(x.dtype):
+        x = mx.where(mx.isnan(x), 1, x)
+    return cumprod(x, axis=axis, dtype=dtype)
 
 
 def nancumsum(x, axis=None, dtype=None):
     x = convert_to_tensor(x)
-    dtype = dtypes.result_type(dtype or x.dtype)
-    if dtype == "bool":
-        dtype = "int32"
-    result = np.nancumsum(_to_numpy(x), axis=_np_axis(axis), dtype=dtype)
-    return mx.array(result).astype(_mlx_result_dtype(dtype))
+    if "float" in standardize_dtype(x.dtype):
+        x = mx.where(mx.isnan(x), 0, x)
+    return cumsum(x, axis=axis, dtype=dtype)
 
 
 def nanmax(x, axis=None, keepdims=False):
     x = convert_to_tensor(x)
-    result = np.nanmax(_to_numpy(x), axis=_np_axis(axis), keepdims=keepdims)
-    return mx.array(result).astype(x.dtype)
+    if "float" not in standardize_dtype(x.dtype):
+        # Integer types cannot hold nan, reduce directly.
+        return max(x, axis=axis, keepdims=keepdims)
+    axis = _np_axis(axis)
+    filled, all_nan = _nan_mask_fill(x, axis, keepdims, -mx.inf)
+    result = max(filled, axis=axis, keepdims=keepdims)
+    return mx.where(all_nan, _nan_scalar(result.dtype), result).astype(x.dtype)
 
 
 def nanmean(x, axis=None, keepdims=False):
     x = convert_to_tensor(x)
     dtype = dtypes.result_type(standardize_dtype(x.dtype), float)
-    result = np.nanmean(_to_numpy(x), axis=_np_axis(axis), keepdims=keepdims)
-    return mx.array(result).astype(_mlx_result_dtype(dtype))
+    mlx_dtype = _mlx_result_dtype(dtype)
+    x = x.astype(mlx_dtype)
+    axis = _np_axis(axis)
+    nan_mask = mx.isnan(x)
+    totals = mx.sum(mx.where(nan_mask, 0, x), axis=axis, keepdims=keepdims)
+    counts = mx.sum(
+        mx.logical_not(nan_mask).astype(mlx_dtype),
+        axis=axis,
+        keepdims=keepdims,
+    )
+    # An all-nan slice divides zero by zero, producing nan like numpy.
+    return totals / counts
 
 
 def nanmedian(x, axis=None, keepdims=False):
@@ -2194,8 +2226,13 @@ def nanmedian(x, axis=None, keepdims=False):
 
 def nanmin(x, axis=None, keepdims=False):
     x = convert_to_tensor(x)
-    result = np.nanmin(_to_numpy(x), axis=_np_axis(axis), keepdims=keepdims)
-    return mx.array(result).astype(x.dtype)
+    if "float" not in standardize_dtype(x.dtype):
+        # Integer types cannot hold nan, reduce directly.
+        return min(x, axis=axis, keepdims=keepdims)
+    axis = _np_axis(axis)
+    filled, all_nan = _nan_mask_fill(x, axis, keepdims, mx.inf)
+    result = min(filled, axis=axis, keepdims=keepdims)
+    return mx.where(all_nan, _nan_scalar(result.dtype), result).astype(x.dtype)
 
 
 def nanpercentile(x, q, axis=None, method="linear", keepdims=False):
@@ -2220,10 +2257,13 @@ def nanpercentile(x, q, axis=None, method="linear", keepdims=False):
 def nanprod(x, axis=None, keepdims=False):
     x = convert_to_tensor(x)
     dtype = _widen_reduce_int_dtype(dtypes.result_type(x.dtype))
-    result = np.nanprod(
-        _to_numpy(x), axis=_np_axis(axis), keepdims=keepdims, dtype=dtype
+    if "float" in standardize_dtype(x.dtype):
+        x = mx.where(mx.isnan(x), 1, x)
+    return mx.prod(
+        x.astype(_mlx_result_dtype(dtype)),
+        axis=_np_axis(axis),
+        keepdims=keepdims,
     )
-    return mx.array(result).astype(_mlx_result_dtype(dtype))
 
 
 def nanquantile(x, q, axis=None, method="linear", keepdims=False):
@@ -2244,35 +2284,31 @@ def nanquantile(x, q, axis=None, method="linear", keepdims=False):
 
 def nanstd(x, axis=None, keepdims=False):
     x = convert_to_tensor(x)
-    compute_dtype = dtypes.result_type(x.dtype, "float32")
     result_dtype = dtypes.result_type(x.dtype, float)
-    result = np.nanstd(
-        _to_numpy(x),
-        axis=_np_axis(axis),
-        keepdims=keepdims,
-        dtype=compute_dtype,
+    # Take the square root in the compute dtype before the final cast.
+    return mx.sqrt(_nanvar_compute(x, axis, keepdims)).astype(
+        _mlx_result_dtype(result_dtype)
     )
-    return mx.array(result).astype(_mlx_result_dtype(result_dtype))
 
 
 def nansum(x, axis=None, keepdims=False):
     x = convert_to_tensor(x)
     dtype = _widen_reduce_int_dtype(standardize_dtype(x.dtype))
-    result = np.nansum(_to_numpy(x), axis=_np_axis(axis), keepdims=keepdims)
-    return mx.array(result).astype(_mlx_result_dtype(dtype))
+    if "float" in standardize_dtype(x.dtype):
+        x = mx.where(mx.isnan(x), 0, x)
+    return mx.sum(
+        x.astype(_mlx_result_dtype(dtype)),
+        axis=_np_axis(axis),
+        keepdims=keepdims,
+    )
 
 
 def nanvar(x, axis=None, keepdims=False):
     x = convert_to_tensor(x)
-    compute_dtype = dtypes.result_type(x.dtype, "float32")
     result_dtype = dtypes.result_type(x.dtype, float)
-    result = np.nanvar(
-        _to_numpy(x),
-        axis=_np_axis(axis),
-        keepdims=keepdims,
-        dtype=compute_dtype,
+    return _nanvar_compute(x, axis, keepdims).astype(
+        _mlx_result_dtype(result_dtype)
     )
-    return mx.array(result).astype(_mlx_result_dtype(result_dtype))
 
 
 def nextafter(x1, x2):
