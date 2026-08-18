@@ -1073,7 +1073,10 @@ def _quantile(
     q_ndim = q_full.ndim
     q = q_full.reshape(-1)
     y, axis = _quantile_flatten_axis(x, axis)
-    sorted_y = mx.sort(y, axis=-1)
+    # Gather with argsort rather than calling mx.sort, whose vjp routes each
+    # gradient through the inverse of the sort permutation instead of the
+    # forward one and so returns gradients against the wrong elements.
+    sorted_y = mx.take_along_axis(y, mx.argsort(y, axis=-1), axis=-1)
     if nan_aware:
         counts = mx.sum(
             mx.logical_not(mx.isnan(y)), axis=-1, keepdims=True
