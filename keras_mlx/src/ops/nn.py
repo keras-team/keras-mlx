@@ -239,19 +239,25 @@ def log_softmax(x, axis=-1):
 
 
 def sparsemax(x, axis=-1):
-    # Sort logits along the specified axis in descending order
+    # Sort logits along the specified axis in descending order. Gather with
+    # argsort rather than calling mx.sort, whose vjp routes each gradient
+    # through the inverse of the sort permutation instead of the forward one
+    # and so returns gradients against the wrong elements.
     logits = convert_to_tensor(x)
-    logits_sorted = -1.0 * mx.sort(logits * -1.0, axis=axis)
+    order = mx.argsort(-1.0 * logits, axis=axis)
+    logits_sorted = mx.take_along_axis(logits, order, axis=axis)
     logits_cumsum = mx.cumsum(logits_sorted, axis=axis)  # find cumulative sum
     r = mx.arange(1, logits.shape[axis] + 1)  # Determine the sparsity
     r_shape = [1] * logits.ndim
     r_shape[axis] = -1  # Broadcast to match the target axis
     r = r.reshape(r_shape)
     support = logits_sorted - (logits_cumsum - 1) / r > 0
-    # Find the threshold
-    k = mx.sum(support, axis=axis, keepdims=True)
-    logits_cumsum_safe = mx.where(support, logits_cumsum, 0.0)
-    tau = (mx.sum(logits_cumsum_safe, axis=axis, keepdims=True) - 1) / k
+    # The threshold comes from the cumulative sum at the LAST supported
+    # index, so gather that one element rather than summing the whole
+    # support, which overshoots tau as soon as more than one index survives.
+    k = mx.sum(support, axis=axis, keepdims=True).astype(mx.int32)
+    cumsum_at_k = mx.take_along_axis(logits_cumsum, k - 1, axis=axis)
+    tau = (cumsum_at_k - 1) / k
     output = mx.maximum(logits - tau, 0.0)
     return output
 
