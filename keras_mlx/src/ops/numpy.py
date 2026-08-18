@@ -1835,11 +1835,12 @@ def corrcoef(x):
         dtype = sd
     else:
         dtype = config.floatx()
-    # Compute in float32 for numerical stability in the low precision cases.
+    # Integers and the half precision types compute in float32 for
+    # numerical stability. convert_to_tensor has already downcast float64.
     x = x.astype(mx.float32)
     if x.ndim == 1:
         # numpy returns a scalar correlation of 1 for a single variable.
-        return mx.array(1.0, dtype=_mlx_result_dtype(dtype))
+        return convert_to_tensor(1.0, dtype=dtype)
     centered = x - mx.mean(x, axis=-1, keepdims=True)
     covariance = centered @ centered.T / (x.shape[-1] - 1)
     stddev = mx.sqrt(mx.diagonal(covariance))
@@ -1961,10 +1962,10 @@ def gcd(x1, x2):
 def geomspace(start, stop, num=50, endpoint=True, dtype=None, axis=0):
     dtype = dtype or config.floatx()
     mlx_dtype = _mlx_result_dtype(standardize_dtype(dtype))
-    start = convert_to_tensor(start).astype(mx.float32)
-    stop = convert_to_tensor(stop).astype(mx.float32)
+    start = convert_to_tensor(start, dtype="float32")
+    stop = convert_to_tensor(stop, dtype="float32")
     # Broadcast so that a scalar start combines with an array stop.
-    common_shape = np.broadcast_shapes(start.shape, stop.shape)
+    common_shape = mx.broadcast_shapes(start.shape, stop.shape)
     start = mx.broadcast_to(start, common_shape)
     stop = mx.broadcast_to(stop, common_shape)
     if bool(mx.any(start == 0)) or bool(mx.any(stop == 0)):
