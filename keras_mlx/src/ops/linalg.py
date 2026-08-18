@@ -34,8 +34,8 @@ def det(a):
         return _det_2x2(a)
     elif len(a_shape) >= 2 and a_shape[-1] == 3 and a_shape[-2] == 3:
         return _det_3x3(a)
-    # mlx cpu lapack kernels only support float32, compute there and
-    # cast back so all sizes return the input float dtype.
+    # The mlx lapack kernels take float32 and float64 but reject the half
+    # precision types, so compute those in float32 and cast back.
     target = a.dtype
     if a.dtype in (mx.bfloat16, mx.float16):
         a = a.astype(mx.float32)
@@ -216,8 +216,9 @@ def matrix_power(a, n):
 def pinv(x, rcond=None):
     x = convert_to_tensor(x)
     target = x.dtype
-    # mlx cpu lapack kernels do not support bfloat16, compute in float32.
-    if x.dtype == mx.bfloat16:
+    # The mlx lapack kernels reject the half precision types, so compute
+    # those in float32 and cast back.
+    if x.dtype in (mx.bfloat16, mx.float16):
         x = x.astype(mx.float32)
     if rcond is None:
         with mx.stream(mx.cpu):
@@ -239,12 +240,17 @@ def matrix_rank(x, tol=None):
             "Expected input to have rank >= 2. "
             f"Received input with shape {x.shape}."
         )
-    # The mlx svd kernel only supports float32, compute there for every
-    # other input dtype, including integers.
-    if x.dtype != mx.float32:
+    # Promote integer and bool inputs to float, matching jax.
+    std = standardize_dtype(x.dtype)
+    if "int" in std or std == "bool":
+        x = x.astype(mx.float32)
+    # The mlx svd kernel rejects the half precision types. float64 goes
+    # through as is so the tolerance below keeps its own eps.
+    if x.dtype in (mx.bfloat16, mx.float16):
         x = x.astype(mx.float32)
     s = svd(x, compute_uv=False)
     if tol is None:
+        # eps of the dtype the svd actually ran in, matching numpy.
         eps = np.finfo(standardize_dtype(x.dtype)).eps
         tol = mx.max(s, axis=-1, keepdims=True) * max(x.shape[-2:]) * eps
     return mx.sum(s > tol, axis=-1).astype(mx.int32)

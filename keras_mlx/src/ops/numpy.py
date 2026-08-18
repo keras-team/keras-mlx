@@ -1627,10 +1627,12 @@ def select(condlist, choicelist, default=0):
 
 def slogdet(x):
     x = convert_to_tensor(x)
-    # Integer input promotes to float32, and the mlx cpu lapack kernels
-    # only support float32, so compute there and cast back.
-    if "float" not in standardize_dtype(x.dtype):
+    # Promote integer and bool inputs to float, matching jax.
+    std = standardize_dtype(x.dtype)
+    if "int" in std or std == "bool":
         x = x.astype(mx.float32)
+    # The mlx lapack kernels take float32 and float64 but reject the half
+    # precision types, so compute those in float32 and cast back.
     target = x.dtype
     if x.dtype in (mx.bfloat16, mx.float16):
         x = x.astype(mx.float32)
