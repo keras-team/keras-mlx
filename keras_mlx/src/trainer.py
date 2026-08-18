@@ -361,7 +361,24 @@ class MLXTrainer(base_trainer.Trainer):
 
         return iterator_step
 
+    def _eval_captured_arrays(self):
+        # Layers may keep plain mlx arrays outside their variables, as
+        # Normalization does after adapt(). A lazy one carries a graph that
+        # mx.compile reads as an uncaptured input, so materialize them.
+        # Flatten rather than walk `vars` directly, the arrays may sit inside
+        # a list or dict attribute. Already evaluated arrays cost nothing, so
+        # this runs on every build and picks up a later adapt().
+        captured = [
+            value
+            for layer in self._flatten_layers()
+            for value in tree.flatten(vars(layer))
+            if isinstance(value, mx.array)
+        ]
+        if captured:
+            mx.eval(*captured)
+
     def make_train_function(self, force=False):
+        self._eval_captured_arrays()
         if self.train_function is not None and not force:
             return
         if not self.run_eagerly and self.jit_compile:
@@ -373,6 +390,7 @@ class MLXTrainer(base_trainer.Trainer):
         self.train_function = step_function
 
     def make_test_function(self, force=False):
+        self._eval_captured_arrays()
         if self.test_function is not None and not force:
             return
         if not self.run_eagerly and self.jit_compile:
@@ -384,6 +402,7 @@ class MLXTrainer(base_trainer.Trainer):
         self.test_function = step_function
 
     def make_predict_function(self, force=False):
+        self._eval_captured_arrays()
         if self.predict_function is not None and not force:
             return
 
