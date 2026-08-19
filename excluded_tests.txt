@@ -71,7 +71,6 @@ OrbaxCheckpointTest::test_training_resumption_1
 OrbaxCheckpointTest::test_training_resumption_2
 QrOpTest::test_qr_call_mode_complete
 QuantizersTest::test_quantize_and_dequantize
-RandomCorrectnessTest
 RandomCropTest::test_dict_input
 RandomCropTest::test_random_crop
 RematTest::test_remat_with_kwargs
