@@ -976,8 +976,6 @@ def _unique_prepare(elements, ndim):
     return order, sorted_elements, is_new, new_pos, n
 
 
-# The sorted argument is accepted for API consistency but not forwarded,
-# the implementation always returns sorted unique values.
 def nonzero(x):
     x = convert_to_tensor(x)
     flat_mask = (x != 0).reshape(-1)
@@ -2644,6 +2642,8 @@ def trapezoid(y, x=None, dx=1.0, axis=-1):
     return mx.sum(averages * deltas, axis=-1)
 
 
+# The sorted argument is accepted for API consistency but not forwarded,
+# the implementation always returns sorted unique values.
 def unique(
     x,
     sorted=True,
