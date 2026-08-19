@@ -1069,7 +1069,7 @@ def _quantile(
     # exact indexing to axis lengths below 2**24.
     if axis is not None and not isinstance(axis, (tuple, list)):
         axis = [axis]
-    q_full = convert_to_tensor(q).astype(mx.float32)
+    q_full = convert_to_tensor(q, dtype="float32")
     q_ndim = q_full.ndim
     q = q_full.reshape(-1)
     y, axis = _quantile_flatten_axis(x, axis)
@@ -2339,7 +2339,7 @@ def nanmin(x, axis=None, keepdims=False):
 
 
 def nanpercentile(x, q, axis=None, method="linear", keepdims=False):
-    q = convert_to_tensor(q).astype(mx.float32)
+    q = convert_to_tensor(q, dtype="float32")
     return nanquantile(x, q / 100, axis=axis, method=method, keepdims=keepdims)
 
 
@@ -2401,7 +2401,7 @@ def nextafter(x1, x2):
 
 
 def percentile(x, q, axis=None, method="linear", keepdims=False):
-    q = convert_to_tensor(q).astype(mx.float32)
+    q = convert_to_tensor(q, dtype="float32")
     return quantile(x, q / 100, axis=axis, method=method, keepdims=keepdims)
 
 
