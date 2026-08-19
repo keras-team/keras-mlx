@@ -1035,30 +1035,136 @@ def prod(x, axis=None, keepdims=False, dtype=None):
     return output.astype(mlx_dtype)
 
 
-def quantile(x, q, axis=None, method="linear", keepdims=False):
+def _quantile_prep(x):
     x = convert_to_tensor(x)
-    q = convert_to_tensor(q)
-
-    # TODO: swap to mlx when quantile is supported
     ori_dtype = standardize_dtype(x.dtype)
-    # np.quantile doesn't support bool
     if ori_dtype == "bool":
-        default_dtype = to_mlx_dtype(config.floatx())
-        x = x.astype(default_dtype)
+        x = x.astype(to_mlx_dtype(config.floatx()))
     if ori_dtype == "int64":
         dtype = config.floatx()
     else:
         dtype = dtypes.result_type(x.dtype, float)
-    mlx_dtype = to_mlx_dtype(dtype)
+    return x.astype(_mlx_result_dtype(dtype))
 
-    # problem casting mlx bfloat16 array to numpy
-    if ori_dtype == "bfloat16":
-        default_dtype = to_mlx_dtype(config.floatx())
-        x = x.astype(default_dtype)
-    x = np.array(x)
-    q = np.array(q)
-    result = np.quantile(x, q, axis=axis, method=method, keepdims=keepdims)
-    return mx.array(result).astype(mlx_dtype)
+
+def _quantile_flatten_axis(x, axis):
+    # Move the reduced axes to the end and flatten them into one, so a
+    # single sort along the last axis serves every method.
+    if axis is None:
+        return x.reshape(-1), None
+    axis = [canonicalize_axis(a, x.ndim) for a in axis]
+    other_dims = sorted(set(range(x.ndim)).difference(axis))
+    perm = other_dims + list(axis)
+    other_shape = [x.shape[i] for i in other_dims]
+    return mx.transpose(x, perm).reshape(other_shape + [-1]), axis
+
+
+def _quantile(
+    x, q, axis=None, method="linear", keepdims=False, nan_aware=False
+):
+    # Ported from the tensorflow backend, which follows
+    # tfp.stats.percentile, extended with per slice valid counts for the
+    # nan aware variants, whose nans sort last. Index math runs in
+    # float32 because float64 is not available on the GPU, which limits
+    # exact indexing to axis lengths below 2**24.
+    if axis is not None and not isinstance(axis, (tuple, list)):
+        axis = [axis]
+    q_full = convert_to_tensor(q, dtype="float32")
+    q_ndim = q_full.ndim
+    q = q_full.reshape(-1)
+    y, axis = _quantile_flatten_axis(x, axis)
+    # Gather with argsort rather than calling mx.sort, whose vjp routes each
+    # gradient through the inverse of the sort permutation instead of the
+    # forward one and so returns gradients against the wrong elements.
+    sorted_y = mx.take_along_axis(y, mx.argsort(y, axis=-1), axis=-1)
+    if nan_aware:
+        counts = mx.sum(
+            mx.logical_not(mx.isnan(y)), axis=-1, keepdims=True
+        ).astype(mx.float32)
+    else:
+        counts = mx.full((1,), y.shape[-1], dtype=mx.float32)
+    exact_idx = (counts - 1) * q
+    max_idx = mx.maximum(counts.astype(mx.int32) - 1, 0)
+
+    def get_indices(method):
+        if method == "lower":
+            indices = mx.floor(exact_idx)
+        elif method == "higher":
+            indices = mx.ceil(exact_idx)
+        elif method == "nearest":
+            indices = mx.round(exact_idx)
+        return mx.clip(indices.astype(mx.int32), 0, max_idx)
+
+    def gather(indices):
+        indices = mx.broadcast_to(
+            indices, sorted_y.shape[:-1] + indices.shape[-1:]
+        )
+        return mx.take_along_axis(sorted_y, indices, axis=-1)
+
+    if method in ("nearest", "lower", "higher"):
+        gathered = gather(get_indices(method))
+    elif method == "midpoint":
+        gathered = 0.5 * (
+            gather(get_indices("lower")) + gather(get_indices("higher"))
+        )
+    elif method == "linear":
+        larger_idx = get_indices("higher")
+        smaller_idx = mx.maximum(larger_idx - 1, 0)
+        larger_idx = mx.clip(smaller_idx + 1, 0, max_idx)
+        fraction = (larger_idx.astype(mx.float32) - exact_idx).astype(y.dtype)
+        larger_val = gather(larger_idx)
+        smaller_val = gather(smaller_idx)
+        blend = larger_val * (1 - fraction) + smaller_val * fraction
+        # The blend turns infinite values into nan through 0 * inf, so
+        # bypass it at the exact endpoints.
+        gathered = mx.where(
+            fraction == 0,
+            larger_val,
+            mx.where(fraction == 1, smaller_val, blend),
+        )
+    else:
+        raise ValueError(
+            "Invalid value for argument `method`. Expected one of "
+            "'linear', 'lower', 'higher', 'midpoint', 'nearest'. "
+            f"Received: method={method}"
+        )
+
+    if nan_aware:
+        # An all-nan slice yields nan, matching numpy.
+        gathered = mx.where(counts == 0, _nan_scalar(gathered.dtype), gathered)
+    gathered = gathered.reshape(gathered.shape[:-1] + q_full.shape)
+    if not nan_aware:
+        # A slice that contains nan yields nan, matching numpy.
+        nan_members = mx.any(
+            mx.isnan(x), axis=None if axis is None else tuple(axis)
+        )
+        nan_members = nan_members.reshape(nan_members.shape + (1,) * q_ndim)
+        gathered = mx.where(nan_members, _nan_scalar(gathered.dtype), gathered)
+    return _quantile_restore_shape(gathered, x, q_ndim, axis, keepdims)
+
+
+def _quantile_restore_shape(gathered, x, q_ndim, axis, keepdims):
+    # Restore the reduced dimensions for keepdims and rotate the q
+    # dimensions from the end to the front, following numpy.
+    if keepdims:
+        if axis is None:
+            gathered = gathered.reshape(
+                (1,) * x.ndim + gathered.shape[len(gathered.shape) - q_ndim :]
+            )
+        else:
+            for i in sorted(axis):
+                gathered = mx.expand_dims(gathered, i)
+    ndims = gathered.ndim
+    if q_ndim == 0 or ndims < 2 or q_ndim % ndims == 0:
+        return gathered
+    shift = q_ndim % ndims
+    perm = list(range(ndims))
+    return mx.transpose(gathered, perm[-shift:] + perm[:-shift])
+
+
+def quantile(x, q, axis=None, method="linear", keepdims=False):
+    x = _quantile_prep(x)
+    return _quantile(x, q, axis=axis, method=method, keepdims=keepdims)
 
 
 def ravel(x):
@@ -2290,10 +2396,7 @@ def nanmean(x, axis=None, keepdims=False):
 
 
 def nanmedian(x, axis=None, keepdims=False):
-    x = convert_to_tensor(x)
-    dtype = dtypes.result_type(standardize_dtype(x.dtype), float)
-    result = np.nanmedian(_to_numpy(x), axis=_np_axis(axis), keepdims=keepdims)
-    return mx.array(result).astype(_mlx_result_dtype(dtype))
+    return nanquantile(x, 0.5, axis=axis, keepdims=keepdims)
 
 
 def nanmin(x, axis=None, keepdims=False):
@@ -2308,22 +2411,8 @@ def nanmin(x, axis=None, keepdims=False):
 
 
 def nanpercentile(x, q, axis=None, method="linear", keepdims=False):
-    x = convert_to_tensor(x)
-    q = convert_to_tensor(q)
-    if standardize_dtype(x.dtype) == "bool":
-        x = x.astype(_mlx_result_dtype(config.floatx()))
-    if "float" in standardize_dtype(x.dtype):
-        dtype = standardize_dtype(x.dtype)
-    else:
-        dtype = config.floatx()
-    result = np.nanpercentile(
-        _to_numpy(x),
-        _to_numpy(q),
-        axis=_np_axis(axis),
-        method=method,
-        keepdims=keepdims,
-    )
-    return mx.array(result).astype(_mlx_result_dtype(dtype))
+    q = convert_to_tensor(q, dtype="float32")
+    return nanquantile(x, q / 100, axis=axis, method=method, keepdims=keepdims)
 
 
 def nanprod(x, axis=None, keepdims=False):
@@ -2339,19 +2428,10 @@ def nanprod(x, axis=None, keepdims=False):
 
 
 def nanquantile(x, q, axis=None, method="linear", keepdims=False):
-    x = convert_to_tensor(x)
-    q = convert_to_tensor(q)
-    if standardize_dtype(x.dtype) == "bool":
-        x = x.astype(_mlx_result_dtype(config.floatx()))
-    dtype = dtypes.result_type(x.dtype, float)
-    result = np.nanquantile(
-        _to_numpy(x),
-        _to_numpy(q),
-        axis=_np_axis(axis),
-        method=method,
-        keepdims=keepdims,
+    x = _quantile_prep(x)
+    return _quantile(
+        x, q, axis=axis, method=method, keepdims=keepdims, nan_aware=True
     )
-    return mx.array(result).astype(_mlx_result_dtype(dtype))
 
 
 def nanstd(x, axis=None, keepdims=False):
@@ -2393,19 +2473,8 @@ def nextafter(x1, x2):
 
 
 def percentile(x, q, axis=None, method="linear", keepdims=False):
-    x = convert_to_tensor(x)
-    q = convert_to_tensor(q)
-    if standardize_dtype(x.dtype) == "bool":
-        x = x.astype(_mlx_result_dtype(config.floatx()))
-    dtype = dtypes.result_type(x.dtype, float)
-    result = np.percentile(
-        _to_numpy(x),
-        _to_numpy(q),
-        axis=_np_axis(axis),
-        method=method,
-        keepdims=keepdims,
-    )
-    return mx.array(result).astype(_mlx_result_dtype(dtype))
+    q = convert_to_tensor(q, dtype="float32")
+    return quantile(x, q / 100, axis=axis, method=method, keepdims=keepdims)
 
 
 def ptp(x, axis=None, keepdims=False):
