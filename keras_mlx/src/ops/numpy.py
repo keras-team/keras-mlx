@@ -1830,7 +1830,10 @@ def cbrt(x):
         dtype = config.floatx()
     elif dtype == "int64":
         dtype = "float64"
-    return mx.array(np.cbrt(_to_numpy(x))).astype(_mlx_result_dtype(dtype))
+    x = x.astype(_mlx_result_dtype(dtype))
+    # mx.power with a fractional exponent is nan for negative bases, so
+    # compute on the magnitude and restore the sign.
+    return mx.sign(x) * mx.power(mx.abs(x), 1 / 3)
 
 
 def corrcoef(x):
@@ -1842,7 +1845,17 @@ def corrcoef(x):
         dtype = sd
     else:
         dtype = config.floatx()
-    return mx.array(np.corrcoef(_to_numpy(x))).astype(_mlx_result_dtype(dtype))
+    # Integers and the half precision types compute in float32 for
+    # numerical stability. convert_to_tensor has already downcast float64.
+    x = x.astype(mx.float32)
+    if x.ndim == 1:
+        # numpy returns a scalar correlation of 1 for a single variable.
+        return convert_to_tensor(1.0, dtype=dtype)
+    centered = x - mx.mean(x, axis=-1, keepdims=True)
+    covariance = centered @ centered.T / (x.shape[-1] - 1)
+    stddev = mx.sqrt(mx.diagonal(covariance))
+    correlation = covariance / mx.expand_dims(stddev, -1) / stddev
+    return mx.clip(correlation, -1, 1).astype(_mlx_result_dtype(dtype))
 
 
 def deg2rad(x):
@@ -1942,7 +1955,9 @@ def fmod(x1, x2):
     mlx_dtype = _mlx_result_dtype(dtype)
     x1 = x1.astype(mlx_dtype)
     x2 = x2.astype(mlx_dtype)
-    return mx.array(np.fmod(_to_numpy(x1), _to_numpy(x2))).astype(mlx_dtype)
+    # mx.remainder is mod style, taking the sign of the divisor. fmod takes
+    # the sign of the dividend and works on magnitudes.
+    return mx.sign(x1) * mx.remainder(mx.abs(x1), mx.abs(x2))
 
 
 def _integer_result_dtype(op_name, x1, x2):
@@ -1981,10 +1996,39 @@ def gcd(x1, x2):
 
 def geomspace(start, stop, num=50, endpoint=True, dtype=None, axis=0):
     dtype = dtype or config.floatx()
-    result = np.geomspace(
-        start, stop, num=num, endpoint=endpoint, dtype=dtype, axis=axis
-    )
-    return mx.array(result).astype(_mlx_result_dtype(standardize_dtype(dtype)))
+    mlx_dtype = _mlx_result_dtype(standardize_dtype(dtype))
+    start = convert_to_tensor(start, dtype="float32")
+    stop = convert_to_tensor(stop, dtype="float32")
+    # Broadcast so that a scalar start combines with an array stop.
+    common_shape = mx.broadcast_shapes(start.shape, stop.shape)
+    start = mx.broadcast_to(start, common_shape)
+    stop = mx.broadcast_to(stop, common_shape)
+    if bool(mx.any(start == 0)) or bool(mx.any(stop == 0)):
+        raise ValueError(
+            "Geometric sequence cannot include zero. "
+            f"Received: start={start}, stop={stop}"
+        )
+    num = int(num)
+    # Interpolate linearly in log space, using the sign of start so that
+    # all negative sequences work.
+    sign = mx.sign(start)
+    log_start = mx.log(mx.abs(start))
+    log_stop = mx.log(mx.abs(stop))
+    divisions = num - 1 if endpoint else num
+    step = (log_stop - log_start) / builtins.max(divisions, 1)
+    steps = mx.arange(num, dtype=mx.float32).reshape((num,) + (1,) * start.ndim)
+    result = sign * mx.exp(log_start + steps * step)
+    # Pin the endpoints to the exact input values.
+    if num > 0:
+        pieces = [mx.expand_dims(start, 0)]
+        if endpoint and num > 1:
+            pieces += [result[1:-1], mx.expand_dims(stop, 0)]
+        else:
+            pieces += [result[1:]]
+        result = mx.concatenate(pieces, axis=0)
+    if axis != 0:
+        result = mx.moveaxis(result, 0, axis)
+    return result.astype(mlx_dtype)
 
 
 def hamming(x):
@@ -2007,9 +2051,12 @@ def heaviside(x1, x2):
         dtype = config.floatx()
     elif dtype == "int64":
         dtype = "float64"
-    return mx.array(np.heaviside(_to_numpy(x1), _to_numpy(x2))).astype(
-        _mlx_result_dtype(dtype)
-    )
+    mlx_dtype = _mlx_result_dtype(dtype)
+    x1 = x1.astype(mlx_dtype)
+    x2 = x2.astype(mlx_dtype)
+    output = mx.where(x1 < 0, 0, mx.where(x1 > 0, 1, x2))
+    # A nan input compares false on both sides and would pick up x2.
+    return mx.where(mx.isnan(x1), x1, output)
 
 
 def hsplit(x, indices_or_sections):
@@ -2026,9 +2073,18 @@ def hypot(x1, x2):
         dtype = config.floatx()
     elif dtype == "int64":
         dtype = "float64"
-    return mx.array(np.hypot(_to_numpy(x1), _to_numpy(x2))).astype(
-        _mlx_result_dtype(dtype)
-    )
+    mlx_dtype = _mlx_result_dtype(dtype)
+    a = mx.abs(x1.astype(mlx_dtype))
+    b = mx.abs(x2.astype(mlx_dtype))
+    # Factor out the larger magnitude so the square cannot overflow.
+    larger = mx.maximum(a, b)
+    smaller = mx.minimum(a, b)
+    larger_safe = mx.where(larger == 0, 1, larger)
+    ratio = smaller / larger_safe
+    result = larger * mx.sqrt(1 + ratio * ratio)
+    # IEEE hypot is inf whenever either input is infinite, even if the
+    # other one is nan.
+    return mx.where(mx.isinf(a) | mx.isinf(b), mx.inf, result)
 
 
 def i0(x):
@@ -2044,16 +2100,15 @@ def i0(x):
 
 
 def isin(x1, x2, assume_unique=False, invert=False):
+    # assume_unique is only a performance hint, the result is the same.
     x1 = convert_to_tensor(x1)
     x2 = convert_to_tensor(x2)
-    return mx.array(
-        np.isin(
-            _to_numpy(x1),
-            _to_numpy(x2),
-            assume_unique=assume_unique,
-            invert=invert,
-        )
+    dtype = _mlx_result_dtype(dtypes.result_type(x1.dtype, x2.dtype))
+    matches = mx.any(
+        mx.expand_dims(x1.astype(dtype), -1) == x2.reshape(-1).astype(dtype),
+        axis=-1,
     )
+    return mx.logical_not(matches) if invert else matches
 
 
 def isneginf(x):
@@ -2068,7 +2123,9 @@ def isposinf(x):
 
 def isreal(x):
     x = convert_to_tensor(x)
-    return mx.array(np.isreal(_to_numpy(x)))
+    if x.dtype == mx.complex64:
+        return mx.imag(x) == 0
+    return mx.ones(x.shape, dtype=mx.bool_)
 
 
 def kaiser(x, beta):
@@ -2108,18 +2165,29 @@ def ldexp(x1, x2):
             "ldexp exponent must be an integer type. "
             f"Received: x2 dtype={x2.dtype}"
         )
-    return mx.array(np.ldexp(_to_numpy(x1), _to_numpy(x2))).astype(
-        _mlx_result_dtype(dtype)
-    )
+    mlx_dtype = _mlx_result_dtype(dtype)
+    x1 = x1.astype(mlx_dtype)
+    # Split the exponent in three so no single power of two overflows
+    # while the true result is still representable, including scaling a
+    # subnormal all the way up to the float maximum.
+    first = x2 // 3
+    second = (x2 - first) // 2
+    third = x2 - first - second
+    two = mx.array(2, dtype=mlx_dtype)
+    for exponent in (first, second, third):
+        x1 = x1 * mx.power(two, exponent.astype(mlx_dtype))
+    return x1
 
 
 def logaddexp2(x1, x2):
     x1 = convert_to_tensor(x1)
     x2 = convert_to_tensor(x2)
     dtype = dtypes.result_type(x1.dtype, x2.dtype, float)
-    return mx.array(np.logaddexp2(_to_numpy(x1), _to_numpy(x2))).astype(
-        _mlx_result_dtype(dtype)
-    )
+    mlx_dtype = _mlx_result_dtype(dtype)
+    x1 = x1.astype(mlx_dtype)
+    x2 = x2.astype(mlx_dtype)
+    ln2 = math.log(2)
+    return mx.logaddexp(x1 * ln2, x2 * ln2) / ln2
 
 
 def _nan_scalar(dtype):
@@ -2338,8 +2406,10 @@ def percentile(x, q, axis=None, method="linear", keepdims=False):
 
 def ptp(x, axis=None, keepdims=False):
     x = convert_to_tensor(x)
-    result = np.ptp(_to_numpy(x), axis=_np_axis(axis), keepdims=keepdims)
-    return mx.array(result).astype(x.dtype)
+    axis = _np_axis(axis)
+    return mx.max(x, axis=axis, keepdims=keepdims) - mx.min(
+        x, axis=axis, keepdims=keepdims
+    )
 
 
 def rad2deg(x):
@@ -2363,16 +2433,29 @@ def sinc(x):
     else:
         dtype = dtypes.result_type(x.dtype, float)
     x = x.astype(_mlx_result_dtype(dtype))
-    return mx.array(np.sinc(_to_numpy(x))).astype(_mlx_result_dtype(dtype))
+    # Substitute a safe value at zero before dividing so that the zero
+    # branch does not produce a nan gradient through the chain rule.
+    x_safe = mx.where(x == 0, 1, x)
+    pix = math.pi * x_safe
+    return mx.where(x == 0, 1, mx.sin(pix) / pix)
 
 
 def trapezoid(y, x=None, dx=1.0, axis=-1):
     y = convert_to_tensor(y)
     result_dtype = dtypes.result_type(y.dtype, float)
-    yn = _to_numpy(y)
-    xn = _to_numpy(convert_to_tensor(x)) if x is not None else None
-    result = np.trapezoid(yn, xn, dx=dx, axis=axis)
-    return mx.array(result).astype(_mlx_result_dtype(result_dtype))
+    mlx_dtype = _mlx_result_dtype(result_dtype)
+    y = mx.moveaxis(y.astype(mlx_dtype), axis, -1)
+    averages = (y[..., 1:] + y[..., :-1]) / 2
+    if x is None:
+        deltas = dx
+    else:
+        x = convert_to_tensor(x).astype(mlx_dtype)
+        # A 1-D x holds the sample points for the integration axis, an x
+        # of the same shape as y holds them per element.
+        if x.ndim > 1:
+            x = mx.moveaxis(x, axis, -1)
+        deltas = x[..., 1:] - x[..., :-1]
+    return mx.sum(averages * deltas, axis=-1)
 
 
 def unique(
@@ -2439,8 +2522,13 @@ def vander(x, N=None, increasing=False):
     result_dtype = dtypes.result_type(x.dtype)
     compute_dtype = dtypes.result_type(x.dtype, config.floatx())
     x = x.astype(_mlx_result_dtype(compute_dtype))
-    result = np.vander(_to_numpy(x), N=N, increasing=increasing)
-    return mx.array(result).astype(_mlx_result_dtype(result_dtype))
+    N = x.shape[0] if N is None else int(N)
+    if increasing:
+        powers = mx.arange(N, dtype=x.dtype)
+    else:
+        powers = mx.arange(N - 1, -1, -1, dtype=x.dtype)
+    result = mx.power(mx.expand_dims(x, -1), powers)
+    return result.astype(_mlx_result_dtype(result_dtype))
 
 
 def view(x, dtype=None):
