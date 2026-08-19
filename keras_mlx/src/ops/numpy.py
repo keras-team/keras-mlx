@@ -2453,7 +2453,7 @@ def trapezoid(y, x=None, dx=1.0, axis=-1):
     if x is None:
         deltas = dx
     else:
-        x = convert_to_tensor(x).astype(mlx_dtype)
+        x = convert_to_tensor(x, dtype=mlx_dtype)
         # A 1-D x holds the sample points for the integration axis, an x
         # of the same shape as y holds them per element.
         if x.ndim > 1:
