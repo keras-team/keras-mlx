@@ -1139,10 +1139,14 @@ def size(x):
 
 def sort(x, axis=-1):
     x = convert_to_tensor(x)
-    # Metal has no bool sort kernel, sort bool values as int8.
+    # Metal has no bool sort kernel, sort bool values as int8. bool carries
+    # no gradient so it can use mx.sort directly.
     if x.dtype == mx.bool_:
         return mx.sort(x.astype(mx.int8), axis=axis).astype(mx.bool_)
-    return mx.sort(x, axis=axis)
+    # Gather with argsort rather than calling mx.sort, whose vjp routes each
+    # gradient through the inverse of the sort permutation instead of the
+    # forward one and so returns gradients against the wrong elements.
+    return mx.take_along_axis(x, mx.argsort(x, axis=axis), axis=axis)
 
 
 def split(x, indices_or_sections, axis=0):
