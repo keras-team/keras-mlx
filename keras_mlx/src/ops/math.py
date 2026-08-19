@@ -105,10 +105,10 @@ def erfc(x):
     # Chebyshev approximation from Numerical Recipes with fractional
     # error below 1.2e-7 everywhere, unlike 1 - erf(x), which loses all
     # precision in the tail.
-    x32 = x.astype(mx.float32)
+    x = x.astype(mx.float32)
     # mx.abs has a zero subgradient at exactly zero, which would zero the
     # erfc gradient there. The where based absolute value keeps it.
-    z = mx.where(x32 >= 0, x32, -x32)
+    z = mx.where(x >= 0, x, -x)
     t = 1 / (1 + z / 2)
     poly = -1.26551223 + t * (
         1.00002368
@@ -136,7 +136,7 @@ def erfc(x):
         )
     )
     result = t * mx.exp(-mx.square(z) + poly)
-    return mx.where(x32 >= 0, result, 2 - result).astype(to_mlx_dtype(dtype))
+    return mx.where(x >= 0, result, 2 - result).astype(to_mlx_dtype(dtype))
 
 
 def top_k(x, k, sorted=True):

@@ -2031,12 +2031,12 @@ def hypot(x1, x2):
     )
 
 
-def _i0_float32(ax):
+def _i0_float32(abs_x):
     # Abramowitz and Stegun 9.8.1 and 9.8.2 polynomial approximations of
     # the modified Bessel function of order zero, on a non-negative
     # float32 input. The absolute error is below 1.6e-7 for the small
     # branch and the relative error below 1.9e-7 for the large branch.
-    t = mx.square(ax / 3.75)
+    t = mx.square(abs_x / 3.75)
     small = 1 + t * (
         3.5156229
         + t
@@ -2048,8 +2048,8 @@ def _i0_float32(ax):
     )
     # Substitute a safe value where the small branch is selected to keep
     # the division and exp well defined.
-    ax_safe = mx.maximum(ax, 3.75)
-    t = 3.75 / ax_safe
+    abs_x_safe = mx.maximum(abs_x, 3.75)
+    t = 3.75 / abs_x_safe
     poly = 0.39894228 + t * (
         0.01328592
         + t
@@ -2070,8 +2070,8 @@ def _i0_float32(ax):
             )
         )
     )
-    large = mx.exp(ax_safe) / mx.sqrt(ax_safe) * poly
-    return mx.where(ax <= 3.75, small, large)
+    large = mx.exp(abs_x_safe) / mx.sqrt(abs_x_safe) * poly
+    return mx.where(abs_x <= 3.75, small, large)
 
 
 def i0(x):
