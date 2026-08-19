@@ -244,14 +244,18 @@ def matrix_rank(x, tol=None):
     std = standardize_dtype(x.dtype)
     if "int" in std or std == "bool":
         x = x.astype(mx.float32)
-    # The mlx svd kernel rejects the half precision types. float64 goes
-    # through as is so the tolerance below keeps its own eps.
+        std = "float32"
+    # The mlx svd kernel rejects the half precision types, so those compute
+    # in float32. float64 goes through as is.
     if x.dtype in (mx.bfloat16, mx.float16):
         x = x.astype(mx.float32)
     s = svd(x, compute_uv=False)
     if tol is None:
-        # eps of the dtype the svd actually ran in, matching numpy.
-        eps = np.finfo(standardize_dtype(x.dtype)).eps
+        # eps of the INPUT dtype, not the compute one. Widening a half
+        # precision input to float32 adds no information, so a float32 eps
+        # would put the cutoff far below the noise the data actually carries
+        # and count that noise as rank.
+        eps = np.finfo(std).eps
         tol = mx.max(s, axis=-1, keepdims=True) * max(x.shape[-2:]) * eps
     return mx.sum(s > tol, axis=-1).astype(mx.int32)
 
