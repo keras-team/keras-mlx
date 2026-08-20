@@ -1927,17 +1927,6 @@ def angle(x):
     return mx.arctan2(im, re)
 
 
-def _to_numpy(*xs):
-    # numpy cannot read mlx bfloat16 arrays, so upcast to float32 first. This
-    # is only used by ops that fall back to numpy for unsupported primitives.
-    out = []
-    for x in xs:
-        if isinstance(x, mx.array) and x.dtype == mx.bfloat16:
-            x = x.astype(mx.float32)
-        out.append(np.asarray(x))
-    return out[0] if len(out) == 1 else out
-
-
 def _np_axis(axis):
     if isinstance(axis, list):
         return tuple(axis)
