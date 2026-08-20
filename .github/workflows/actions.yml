@@ -49,7 +49,12 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           repository: keras-team/keras
-          ref: pluggable_backend
+          # Pinned rather than tracking the branch head. The 2026-08-20 merge
+          # of master into pluggable_backend left the openvino backend on the
+          # flat layout with no ops/ package, which breaks the plugin import
+          # and fails every test here. Move this forward once the branch
+          # builds again.
+          ref: 21078b7d89c310402d20b2d210193408528199de
           path: keras
           persist-credentials: false
  
