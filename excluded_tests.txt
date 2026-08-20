@@ -20,8 +20,6 @@ HashingTest::test_one_hot_output
 ImageOpsCorrectnessTest::test_resize_with_pad
 LayerTest::test_quantized_layer_with_remat
 LinalgOpsCorrectnessTest::test_cholesky
-LinalgOpsCorrectnessTest::test_qr
-LinalgOpsDynamicShapeTest::test_qr_invalid_mode
 LionTest::test_ema
 LoadModelTests::test_basic_load_float64
 LoadWeightsTests::test_load_weights_h5_float16_float64
@@ -69,7 +67,6 @@ NumpyTwoInputOpsCorrectnessTest::test_cross
 OrbaxCheckpointTest::test_checkpoint_saving_basic0
 OrbaxCheckpointTest::test_training_resumption_1
 OrbaxCheckpointTest::test_training_resumption_2
-QrOpTest::test_qr_call_mode_complete
 QuantizersTest::test_quantize_and_dequantize
 RandomCorrectnessTest
 RandomCropTest::test_dict_input

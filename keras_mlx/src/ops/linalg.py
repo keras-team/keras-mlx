@@ -84,14 +84,26 @@ def solve_triangular(a, b, lower=False):
 
 
 def qr(x, mode="reduced"):
-    if mode != "reduced":
+    if mode not in ("reduced", "complete"):
         raise ValueError(
             "`mode` argument value not supported. "
-            "Only 'reduced' is supported by the mlx backend. "
+            "Expected one of {'reduced', 'complete'}. "
             f"Received: mode={mode}"
         )
+    x = convert_to_tensor(x)
     with mx.stream(mx.cpu):
-        return mx.linalg.qr(x)
+        if mode == "reduced":
+            return mx.linalg.qr(x)
+        # mlx only computes the reduced form, so build the full basis by
+        # factoring x with an identity appended. The extra columns fill out
+        # the orthonormal complement, and R is then Q transpose times x.
+        rows = x.shape[-2]
+        eye = mx.broadcast_to(
+            mx.eye(rows, dtype=x.dtype), x.shape[:-1] + (rows,)
+        )
+        q, _ = mx.linalg.qr(mx.concatenate([x, eye], axis=-1))
+        r = mx.matmul(mx.swapaxes(q, -1, -2), x)
+        return q, r
 
 
 def svd(x, full_matrices=True, compute_uv=True):
