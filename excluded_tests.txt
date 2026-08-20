@@ -1,6 +1,6 @@
-AdamTest::test_ema
 AWQAccuracyTest::test_awq_transformer_accuracy_group_16
 AWQAccuracyTest::test_awq_transformer_accuracy_per_channel
+AdamTest::test_ema
 BackupAndRestoreCallbackTest::test_best_case_step
 CallbackTest::test_model_state_is_current_on_epoch_end
 CoreOpsCorrectnessTest::test_cast_float8_float8_e4m3fn
@@ -19,7 +19,6 @@ HashingTest::test_multi_hot_output
 HashingTest::test_one_hot_output
 ImageOpsCorrectnessTest::test_resize_with_pad
 LayerTest::test_quantized_layer_with_remat
-LinalgOpsCorrectnessTest::test_cholesky
 LinalgOpsCorrectnessTest::test_qr
 LinalgOpsDynamicShapeTest::test_qr_invalid_mode
 LionTest::test_ema
@@ -96,8 +95,8 @@ TestModelQuantization::test_quantize_gptq_combinations_token_dataset_per_channel
 TestModelQuantization::test_quantize_gptq_combinations_token_dataset_symmetric
 TestModelQuantization::test_quantize_gptq_combinations_token_dataset_symmetric_act_order
 TestModelQuantization::test_quantize_gptq_combinations_token_dataset_symmetric_per_channel
-TestTensorBoardV2::test_custom_summary
 TestTensorBoardV2::test_TensorBoard_non_blocking
+TestTensorBoardV2::test_custom_summary
 TestTrainer::test_callbacks_can_update_state_at_batch_boundary
 TestTrainer::test_evaluate_with_custom_test_step_dict
 TestTrainer::test_evaluate_with_custom_test_step_flat

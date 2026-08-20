@@ -109,9 +109,12 @@ def svd(x, full_matrices=True, compute_uv=True):
 def cholesky(a, upper=False):
     with mx.stream(mx.cpu):
         out = mx.linalg.cholesky(a, upper=upper)
-    # Match numpy and jax: surface a non positive definite input as an error
-    # in eager mode. mlx returns nan for some such inputs.
-    if mx.any(mx.isnan(out)):
+    # Match numpy and jax and surface a non positive definite input as an
+    # error. A real factor has a strictly positive diagonal, and mlx returns
+    # a negative one rather than nan for most such inputs. The comparison
+    # also catches nan, since nan > 0 is false.
+    diagonal = mx.diagonal(out, axis1=-2, axis2=-1)
+    if not mx.all(diagonal > 0):
         raise ValueError(
             "Cholesky decomposition failed. The input might not be a valid "
             "positive definite matrix."
