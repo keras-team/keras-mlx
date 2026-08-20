@@ -114,8 +114,12 @@ def gamma(shape, alpha, dtype=None, seed=None):
     dtype = to_mlx_dtype(dtype or floatx())
 
     # The sampler below is elementwise, so broadcast alpha over the lanes and
-    # an array alpha costs no more than a scalar one.
-    alpha = mx.broadcast_to(mx.array(alpha).astype(mx.float32), shape)
+    # an array alpha costs no more than a scalar one. Flatten a single
+    # element first, its rank may exceed the output rank.
+    alpha = mx.array(alpha).astype(mx.float32)
+    if alpha.size == 1:
+        alpha = alpha.reshape(())
+    alpha = mx.broadcast_to(alpha, shape)
     # Split the boost key up front. The loop can stop early, so a key taken
     # after it would depend on how many rounds ran.
     key, boost_key = mx.random.split(mlx_draw_seed(seed), 2)
@@ -199,7 +203,12 @@ def beta(shape, alpha, beta, dtype=None, seed=None):
     key_x, key_y = mx.random.split(key, 2)
     x = gamma(shape, alpha_arr, dtype=dtype, seed=key_x)
     y = gamma(shape, beta_arr, dtype=dtype, seed=key_y)
-    return (x / (x + y)).astype(dtype)
+    # Both draws can underflow to zero for a small alpha, and 0/0 is nan,
+    # which is outside the support. jax and numpy return zero there.
+    total = x + y
+    nonzero = total > 0
+    ratio = x / mx.where(nonzero, total, 1)
+    return mx.where(nonzero, ratio, 0).astype(dtype)
 
 
 def binomial(shape, counts, probabilities, dtype=None, seed=None):
