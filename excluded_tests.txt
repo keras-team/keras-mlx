@@ -57,7 +57,6 @@ ModelTest::test_functional_optional_inputs_generator_optional_none
 ModelTest::test_functional_optional_inputs_optional_none
 ModelTest::test_quantize_float8
 MuonTest::test_model_fit
-NNOpsCorrectnessTest::test_dot_product_attention
 NNOpsDynamicShapeTest::test_softmax_in_graph
 NumpyDtypeTest::test_dot_
 NumpyDtypeTest::test_inner_
