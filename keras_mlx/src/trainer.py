@@ -29,6 +29,9 @@ class Trainer(BaseTrainer):
     def _data_to_mlx(self, data):
         return tree.map_structure(convert_to_tensor, data, none_is_leaf=False)
 
+    def _backend_state_sync(self):
+        self.mlx_state_sync()
+
     def mlx_state_sync(self):
         if not getattr(self, "_mlx_state", None) or self._mlx_state_synced:
             return
