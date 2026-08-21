@@ -17,7 +17,7 @@ class Variable(KerasVariable):
         return self.value
 
     def __array__(self, dtype=None):
-        value = convert_to_numpy(self._value)
+        value = convert_to_numpy(self.value)
         if dtype:
             return value.astype(dtype)
         return value
