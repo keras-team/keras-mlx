@@ -1708,17 +1708,11 @@ def unravel_index(indices, shape):
             f"`shape` argument cannot contain `None`. Received: shape={shape}"
         )
 
-    if x.ndim == 1:
-        coords = []
-        for dim in reversed(shape):
-            coords.append((x % dim).astype(input_dtype))
-            x = x // dim
-        return tuple(reversed(coords))
-
-    x_shape = x.shape
+    # Peel the coordinates off the trailing axis first, so every remainder is
+    # taken against the stride the flat index was built with.
     coords = []
-    for dim in shape:
-        coords.append(mx.reshape((x % dim).astype(input_dtype), x_shape))
+    for dim in reversed(shape):
+        coords.append((x % dim).astype(input_dtype))
         x = x // dim
 
     return tuple(reversed(coords))
