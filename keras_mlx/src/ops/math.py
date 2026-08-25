@@ -572,6 +572,121 @@ def erfinv(x):
     return mx.erfinv(x)
 
 
+# Lanczos coefficients for g = 7, the standard nine term set. mlx has no
+# lgamma primitive, so the incomplete gamma below carries its own.
+_LANCZOS_G = 7.0
+_LANCZOS_COEFFICIENTS = (
+    0.99999999999980993,
+    676.5203681218851,
+    -1259.1392167224028,
+    771.32342877765313,
+    -176.61502916214059,
+    12.507343278686905,
+    -0.13857109526572012,
+    9.9843695780195716e-6,
+    1.5056327351493116e-7,
+)
+# Numerical Recipes leaves both incomplete gamma branches as soon as a term
+# stops moving the sum, which a traced graph cannot do, so the count is fixed
+# instead. Holding float32 accuracy takes 200 terms where x sits near a and a
+# is large, the slowest corner for either branch.
+_GAMMAINC_ITERATIONS = 200
+# Where the Stirling series takes over from the direct difference below.
+_STIRLING_THRESHOLD = 8.0
+
+
+def _lgamma(x):
+    # Lanczos approximation of log(gamma(x)), valid for x > 0 and well inside
+    # what float32 can resolve.
+    z = x - 1.0
+    series = _LANCZOS_COEFFICIENTS[0]
+    for offset, coefficient in enumerate(_LANCZOS_COEFFICIENTS[1:], start=1):
+        series = series + coefficient / (z + offset)
+    t = z + _LANCZOS_G + 0.5
+    return (
+        0.5 * python_math.log(2.0 * python_math.pi)
+        + (z + 0.5) * mx.log(t)
+        - t
+        + mx.log(series)
+    )
+
+
+def _log_gamma_prefactor(a, x):
+    # log of x ** a * exp(-x) / gamma(a), the factor both incomplete gamma
+    # branches share. The direct form subtracts quantities of order
+    # a * log(a) from each other, which in float32 leaves nothing behind once
+    # a grows, so it is split into two well conditioned pieces instead.
+    delta = x - a
+    # 1. a * log(x / a) - (x - a), which stays small around x equal to a.
+    scaled = a * mx.log1p(delta / a) - delta
+    # 2. a * log(a) - a - lgamma(a). Past the threshold the Stirling series
+    # gives it outright. Below it the three terms are small enough to
+    # subtract without losing anything.
+    stirling = (
+        0.5 * mx.log(a / (2.0 * python_math.pi))
+        - 1.0 / (12.0 * a)
+        + 1.0 / (360.0 * a**3)
+    )
+    direct = a * mx.log(a) - a - _lgamma(a)
+    return scaled + mx.where(a > _STIRLING_THRESHOLD, stirling, direct)
+
+
+def _lower_gamma_series(a, x):
+    # Series for the lower incomplete gamma, which converges quickly while x
+    # sits below a + 1.
+    ap = a
+    term = 1.0 / a
+    total = term
+    for _ in range(_GAMMAINC_ITERATIONS):
+        ap = ap + 1.0
+        term = term * x / ap
+        total = total + term
+    return total
+
+
+def _upper_gamma_fraction(a, x):
+    # Modified Lentz evaluation of the continued fraction for the upper
+    # incomplete gamma, which takes over once x reaches a + 1. The guards keep
+    # a denominator from collapsing to zero mid iteration.
+    tiny = 1e-30
+    b = x + 1.0 - a
+    c = mx.zeros_like(b) + 1.0 / tiny
+    d = 1.0 / b
+    h = d
+    for i in range(1, _GAMMAINC_ITERATIONS + 1):
+        an = -i * (i - a)
+        b = b + 2.0
+        d = an * d + b
+        d = mx.where(mx.abs(d) < tiny, tiny, d)
+        c = b + an / c
+        c = mx.where(mx.abs(c) < tiny, tiny, c)
+        d = 1.0 / d
+        h = h * d * c
+    return h
+
+
+def gammainc(x1, x2):
+    x1 = convert_to_tensor(x1)
+    x2 = convert_to_tensor(x2)
+    dtype = dtypes.result_type(x1.dtype, x2.dtype, float)
+    # mlx has no incomplete gamma primitive. Both branches are evaluated for
+    # every element because a traced graph cannot take only one of them, and
+    # float32 holds the intermediate products either branch needs.
+    a = x1.astype(mx.float32)
+    x = x2.astype(mx.float32)
+    prefactor = mx.exp(_log_gamma_prefactor(a, x))
+    # 1. Below a + 1 the series gives the lower tail directly.
+    series = _lower_gamma_series(a, x) * prefactor
+    # 2. At or above it the fraction gives the upper tail, so take the
+    # complement.
+    fraction = 1.0 - _upper_gamma_fraction(a, x) * prefactor
+    out = mx.where(x < a + 1.0, series, fraction)
+    # The logarithm above is not finite at x equal to zero, where the answer
+    # is simply zero.
+    out = mx.where(x > 0, out, mx.zeros_like(out))
+    return out.astype(to_mlx_dtype(dtype))
+
+
 def logdet(x):
     from keras_mlx.src.ops.numpy import slogdet
 
