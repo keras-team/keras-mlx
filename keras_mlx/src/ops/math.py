@@ -139,7 +139,7 @@ def erfc(x):
     return mx.where(x >= 0, result, 2 - result).astype(to_mlx_dtype(dtype))
 
 
-def top_k(x, k, sorted=True):
+def top_k(x, k, sorted=True, is_stable=True):
     # default to sorted=True to match other backends
     x = convert_to_tensor(x)
     if k > x.shape[-1]:
@@ -147,16 +147,24 @@ def top_k(x, k, sorted=True):
             "`k` must be less than or equal to the size of the last "
             f"dimension of `x` ({x.shape[-1]}). Received: k={k}"
         )
-    # argpartition requires kth < size, so clamp when k equals the last dim.
-    kth = min(k, x.shape[-1] - 1)
-    indices = mx.argpartition(mx.negative(x), kth, axis=-1)[..., :k]
+    ranked = mx.negative(x)
+    if is_stable:
+        # mx.argsort is stable, so ranking the whole axis breaks ties by the
+        # lower index the way the other backends do. mx.argpartition makes no
+        # such promise, which is why it only serves the unstable path.
+        indices = mx.argsort(ranked, axis=-1)[..., :k]
+    else:
+        # argpartition requires kth < size, so clamp when k equals the last
+        # dimension.
+        kth = min(k, x.shape[-1] - 1)
+        indices = mx.argpartition(ranked, kth, axis=-1)[..., :k]
+        if sorted:
+            order = mx.argsort(
+                mx.take_along_axis(ranked, indices, axis=-1), axis=-1
+            )
+            indices = mx.take_along_axis(indices, order, axis=-1)
+
     values = mx.take_along_axis(x, indices, axis=-1)
-
-    if sorted:
-        sort_indices = mx.argsort(mx.negative(values), axis=-1)
-        values = mx.take_along_axis(values, sort_indices, axis=-1)
-        indices = mx.take_along_axis(indices, sort_indices, axis=-1)
-
     return values, indices.astype(mx.int32)
 
 
