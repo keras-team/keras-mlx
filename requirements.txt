@@ -23,4 +23,4 @@ array_record==0.7.2
 
 # Testing
 pytest
-# pytest-xdist
+pytest-xdist

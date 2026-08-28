@@ -18,7 +18,17 @@ jobs:
   run_cpu_tests:
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        include:
+          # The linux runner dies partway through the suite, sometimes as a
+          # MemoryError and sometimes as a segfault, under the cumulative
+          # memory of running every test in one process. Splitting the run
+          # across worker processes keeps each one small, and a worker that
+          # dies no longer takes the whole run with it. loadfile groups the
+          # tests by file, which is how keras itself runs them.
+          - os: ubuntu-latest
+            pytest_args: -n auto --dist loadfile
+          - os: macos-latest
+            pytest_args: ""
       fail-fast: false
 
     name: Run tests on ${{ matrix.os }}
@@ -68,7 +78,7 @@ jobs:
 
       - name: Run Tests
         working-directory: ./keras
-        run: pytest keras --ignore keras/src/applications --ignore keras/src/wrappers
+        run: pytest keras ${{ matrix.pytest_args }} --ignore keras/src/applications --ignore keras/src/wrappers
 
       # TODO integration tests
 
