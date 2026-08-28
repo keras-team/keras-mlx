@@ -24,3 +24,7 @@ array_record==0.7.2
 # Testing
 pytest
 pytest-xdist
+
+# Linting
+pre-commit
+ruff

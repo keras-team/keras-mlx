@@ -369,9 +369,9 @@ def while_loop(
     maximum_iterations=None,
 ):
     current_iter = 0
-    iteration_check = lambda iter: (
-        maximum_iterations is None or iter < maximum_iterations
-    )
+
+    def iteration_check(iter):
+        return maximum_iterations is None or iter < maximum_iterations
 
     is_sequence = isinstance(loop_vars, (tuple, list))
 
