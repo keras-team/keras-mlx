@@ -934,6 +934,21 @@ class MLXTrainer(base_trainer.Trainer):
 
 
 class MLXEpochIterator(EpochIterator):
+    def __init__(self, *args, **kwargs):
+        def _to_numpy(x):
+            if isinstance(x, mx.array):
+                return convert_to_numpy(x)
+            return x
+
+        for key in ("x", "y", "sample_weight"):
+            if key in kwargs:
+                kwargs[key] = tree.map_structure(_to_numpy, kwargs[key])
+        args = list(args)
+        for i in range(min(len(args), 3)):
+            args[i] = tree.map_structure(_to_numpy, args[i])
+
+        super().__init__(*args, **kwargs)
+
     def __next__(self):
         begin_step, end_step, buffer = super().__next__()
         buffer = tree.map_structure(convert_to_tensor, buffer)

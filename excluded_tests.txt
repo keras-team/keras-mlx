@@ -56,7 +56,6 @@ ModelTest::test_functional_optional_inputs_generator_optional_none
 ModelTest::test_functional_optional_inputs_optional_none
 ModelTest::test_quantize_float8
 MuonTest::test_model_fit
-NNOpsDynamicShapeTest::test_softmax_in_graph
 NumpyDtypeTest::test_dot_
 NumpyDtypeTest::test_inner_
 NumpyDtypeTest::test_tensordot_
@@ -100,7 +99,6 @@ TestTrainer::test_callbacks_can_update_state_at_batch_boundary
 TestTrainer::test_evaluate_with_custom_test_step_dict
 TestTrainer::test_evaluate_with_custom_test_step_flat
 TestTrainer::test_fit_with_custom_train_step
-TestTrainer::test_fit_with_data_adapter_native_array
 TestTrainer::test_fit_with_val_split_eager
 TestTrainer::test_fit_with_val_split_graph_fn
 TestTrainer::test_fit_with_val_split_jit
