@@ -1,4 +1,5 @@
 import builtins
+import math
 import operator
 from itertools import accumulate
 
@@ -1340,6 +1341,31 @@ def _dot_product_attention(query, key, value, bias, mask, is_causal, scale):
     return encoded
 
 
+def _flash_attention(query, key, value, bias, mask, is_causal, scale):
+    # mlx's fused kernel wants the heads on axis 1, keras carries them on
+    # axis 2.
+    dtype = to_mlx_dtype(result_type(query.dtype, key.dtype, value.dtype))
+    q = mx.swapaxes(query.astype(dtype), 1, 2)
+    k = mx.swapaxes(key.astype(dtype), 1, 2)
+    v = mx.swapaxes(value.astype(dtype), 1, 2)
+
+    if bias is None and mask is None:
+        fused_mask = "causal" if is_causal else None
+    else:
+        # The kernel takes one additive mask, so fold the bias and the mask
+        # into the shape the manual path builds its logits in.
+        logits_shape = (q.shape[0], q.shape[1], q.shape[2], k.shape[2])
+        additive = mx.zeros(logits_shape, dtype=mx.float32)
+        if bias is not None:
+            additive = additive + bias
+        fused_mask = _apply_masks(additive, mask, is_causal).astype(dtype)
+
+    encoded = mx.fast.scaled_dot_product_attention(
+        q, k, v, scale=scale, mask=fused_mask
+    )
+    return mx.swapaxes(encoded, 1, 2).astype(dtype)
+
+
 def dot_product_attention(
     query,
     key,
@@ -1353,8 +1379,6 @@ def dot_product_attention(
 ):
     if flash_attention is None:
         flash_attention = False
-    if flash_attention:
-        raise ValueError("Flash attention is not supported in mlx backend.")
 
     query = convert_to_tensor(query)
     key = convert_to_tensor(key)
@@ -1384,7 +1408,12 @@ def dot_product_attention(
         value = mx.repeat(value, repeats, axis=2)
 
     H = key.shape[-1]
-    scale = (1.0 / mx.sqrt(H)) if scale is None else scale
+    # Keep the default a python float, the fused kernel takes a scalar.
+    scale = (1.0 / math.sqrt(H)) if scale is None else scale
+    if flash_attention:
+        return _flash_attention(
+            query, key, value, bias, mask, is_causal, float(scale)
+        )
     return _dot_product_attention(
         query, key, value, bias, mask, is_causal, scale
     )
