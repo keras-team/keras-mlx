@@ -33,5 +33,5 @@ path, at 3.56x compression for int8 and 6.40x for int4 including scales and
 biases.
 
 This is not reachable from keras yet. There is no backend dispatched quantized
-op, so `Dense` composes from `ops.matmul` and never reaches a fused kernel. See
-feature B in `ROADMAP.md`.
+op, so `Dense` composes from `ops.matmul` and never reaches a fused kernel, so
+this measures the gap rather than exercising a fast path.
