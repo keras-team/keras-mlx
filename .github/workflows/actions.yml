@@ -19,14 +19,19 @@ jobs:
     strategy:
       matrix:
         include:
-          # The linux runner dies partway through the suite, sometimes as a
-          # MemoryError and sometimes as a segfault, under the cumulative
-          # memory of running every test in one process. Splitting the run
-          # across worker processes keeps each one small, and a worker that
-          # dies no longer takes the whole run with it. loadfile groups the
-          # tests by file, which is how keras itself runs them.
+          # The linux runner runs out of memory partway through the suite.
+          # Splitting it across worker processes means a worker that dies no
+          # longer takes the whole run with it, but -n auto gives 4 workers on
+          # a 4 vCPU runner and their combined peak still reaches about 8.4G
+          # against 16G of RAM, so the run stayed flaky. Two workers hold the
+          # same suite in about 6.4G. The growth is not ours, the numpy
+          # backend retains the same memory on the same files, most of it in
+          # ops/numpy_test.py, so there is nothing to fix in the backend.
+          # loadfile groups the tests by file, which is how keras runs them.
+          # Do not swap it for load, which lowers the per worker peak but
+          # raises the combined one to 12.3G.
           - os: ubuntu-latest
-            pytest_args: -n auto --dist loadfile
+            pytest_args: -n 2 --dist loadfile
           - os: macos-latest
             pytest_args: ""
       fail-fast: false
