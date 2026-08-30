@@ -1727,9 +1727,13 @@ def searchsorted_binary(a, b, side="left"):
     indices = mx.full(b_flat.shape, vals=size // 2, dtype=mx.int32)
 
     if side == "left":
-        comparison = lambda x, y: x <= y
+
+        def comparison(x, y):
+            return x <= y
     else:
-        comparison = lambda x, y: x < y
+
+        def comparison(x, y):
+            return x < y
 
     upper = size
     lower = 0

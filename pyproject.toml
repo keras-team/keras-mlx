@@ -50,15 +50,9 @@ select = [
     "I",  # isort
     "S101",  # flake8-bandit / use of assert detected
 ]
-ignore = [
-    "E722",  # do not use bare 'except'
-    "E741",  # ambiguous variable name
-    "E731",  # do not assign a `lambda` expression, use a `def`
-]
 
 [tool.ruff.lint.per-file-ignores]
-# Imports at the top would be circular or unused, they are re-exports.
-"**/__init__.py" = ["E402", "E501", "F401"]
+"**/__init__.py" = ["E501", "F401"]  # lines too long; imported but unused
 
 [tool.ruff.lint.isort]
 force-single-line = true
