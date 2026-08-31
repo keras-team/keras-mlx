@@ -72,6 +72,13 @@ jobs:
         working-directory: ./keras
         run: python -c "import keras; assert keras.backend.backend() == 'mlx'; import keras_mlx; print(keras_mlx.__version__)"
 
+      - name: Run the keras-mlx tests
+        # These cover the behaviour the keras suite skips for this backend.
+        # They are quick, so run them before the long suite below.
+        # Run from ./keras, which is where keras itself is importable from.
+        working-directory: ./keras
+        run: pytest ../keras-mlx/keras_mlx
+
       - name: Run Tests
         working-directory: ./keras
         # Splitting across workers keeps each process small and means a worker
@@ -125,6 +132,13 @@ jobs:
       - name: Verify installation
         working-directory: ./keras
         run: python -c "import keras; assert keras.backend.backend() == 'mlx'; import keras_mlx; print(keras_mlx.__version__)"
+
+      - name: Run the keras-mlx tests
+        # These cover the behaviour the keras suite skips for this backend.
+        # They are quick, so run them before the long suite below.
+        # Run from ./keras, which is where keras itself is importable from.
+        working-directory: ./keras
+        run: pytest ../keras-mlx/keras_mlx
 
       - name: Run Tests
         working-directory: ./keras
