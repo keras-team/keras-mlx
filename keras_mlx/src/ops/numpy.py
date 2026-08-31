@@ -268,6 +268,11 @@ def argmin(x, axis=None, keepdims=False):
 def argsort(x, axis=-1):
     x = convert_to_tensor(x)
     axis = None if x.ndim == 0 else axis
+    # mlx sizes the sort from the element count and divides by it, so an empty
+    # input takes the process down with SIGFPE on the cpu backend. There is
+    # nothing to order, so return the empty result.
+    if x.size == 0:
+        return mx.zeros((0,) if axis is None else x.shape, dtype=mx.int32)
     # Metal has no bool sort kernel, sort bool keys as int8.
     if x.dtype == mx.bool_:
         x = x.astype(mx.int8)
@@ -541,6 +546,9 @@ def cumprod(x, axis=None, dtype=None):
     if dtype == "bool":
         dtype = "int32"
     x = cast(x, dtype)
+    # See argsort, an empty input crashes the scan the same way.
+    if x.size == 0:
+        return mx.reshape(x, (0,)) if axis is None else x
     if x.dtype in [mx.int64, mx.uint64]:
         return mx.cumprod(
             x, axis=axis, stream=mx.Device(type=mx.DeviceType.cpu)
@@ -552,6 +560,13 @@ def cumsum(x, axis=None, dtype=None):
     x = convert_to_tensor(x)
     if dtype is not None:
         x = cast(x, dtype)
+    # mx.cumsum accumulates bool into int32. Do it here so the empty result
+    # below carries the same dtype the populated one would.
+    if x.dtype == mx.bool_:
+        x = cast(x, "int32")
+    # See argsort, an empty input crashes the scan the same way.
+    if x.size == 0:
+        return mx.reshape(x, (0,)) if axis is None else x
     if x.dtype in [mx.int64, mx.uint64]:
         return mx.cumsum(x, axis=axis, stream=mx.Device(type=mx.DeviceType.cpu))
     return mx.cumsum(x, axis=axis)
@@ -1287,6 +1302,10 @@ def size(x):
 
 def sort(x, axis=-1):
     x = convert_to_tensor(x)
+    # See argsort, an empty input crashes the same way. Sorting nothing gives
+    # the input back.
+    if x.size == 0:
+        return mx.reshape(x, (0,)) if axis is None else x
     # Metal has no bool sort kernel, sort bool values as int8. bool carries
     # no gradient so it can use mx.sort directly.
     if x.dtype == mx.bool_:
