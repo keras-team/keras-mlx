@@ -15,23 +15,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  run_cpu_tests:
-    strategy:
-      matrix:
-        include:
-          # ubuntu-latest is 4 vCPU and 16G, and the keras suite does not
-          # fit in it. keras runs the same suite on linux-x86-n2-16, so use
-          # that here too. Splitting across workers stays, since a worker
-          # that dies no longer takes the whole run with it, and loadfile
-          # groups the tests by file the way keras runs them.
-          - os: linux-x86-n2-16
-            pytest_args: -n auto --dist loadfile
-          - os: macos-latest
-            pytest_args: ""
-      fail-fast: false
-
-    name: Run tests on ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
+  run_linux_tests:
+    # ubuntu-latest is 4 vCPU and 16G, and the suite does not fit in it. It
+    # grows to about 5.5G in a single process and dies roughly one run in
+    # four. That is not backend specific, ops/numpy_test.py retains about
+    # 3.7G under numpy too. keras runs the same suite on linux-x86-n2-16, so
+    # run it there. Those runners need a container, so follow the keras setup.
+    name: Run tests on linux
+    runs-on: linux-x86-n2-16
+    container:
+      image: python:3.11-slim
     timeout-minutes: 120
 
     env:
@@ -42,18 +35,22 @@ jobs:
       MLX_DISABLE_COMPILE: 1
 
     steps:
-      - name: Set up Python
-        if: ${{ matrix.os == 'macos-latest' }}
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: '3.11'
+      - name: Install binary dependencies
+        # python:3.11-slim ships neither of these. build-essential is the
+        # C++ compiler Torch Dynamo needs, and git is for the two checkouts
+        # below. Those end up owned by a different user than the container
+        # runs as, so git has to be told they are safe.
+        run: |
+          apt-get update
+          apt-get -y install build-essential git
+          git config --global --add safe.directory '*'
 
       - name: Checkout keras-mlx ${{ github.ref }}
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           path: keras-mlx
           persist-credentials: false
- 
+
       - name: Checkout keras
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -61,7 +58,7 @@ jobs:
           ref: pluggable_backend
           path: keras
           persist-credentials: false
- 
+
       - name: Install Python dependencies
         run: |
           pip install -r keras/requirements-common.txt
@@ -77,7 +74,61 @@ jobs:
 
       - name: Run Tests
         working-directory: ./keras
-        run: pytest keras ${{ matrix.pytest_args }} --ignore keras/src/applications --ignore keras/src/wrappers
+        # Splitting across workers keeps each process small and means a worker
+        # that dies no longer takes the whole run with it. loadfile groups the
+        # tests by file, which is how keras itself runs them.
+        run: pytest keras -n auto --dist loadfile --ignore keras/src/applications --ignore keras/src/wrappers
+
+      # TODO integration tests
+
+  run_macos_tests:
+    # macos-latest is Apple silicon, so this is the only leg that runs Metal.
+    # It has no container, GitHub hosted macOS runners cannot run one.
+    name: Run tests on macos
+    runs-on: macos-latest
+    timeout-minutes: 120
+
+    env:
+      KERAS_HOME: ../keras-mlx/.github/workflows/config
+      # See the linux job.
+      MLX_DISABLE_COMPILE: 1
+
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.11'
+
+      - name: Checkout keras-mlx ${{ github.ref }}
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          path: keras-mlx
+          persist-credentials: false
+
+      - name: Checkout keras
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: keras-team/keras
+          ref: pluggable_backend
+          path: keras
+          persist-credentials: false
+
+      - name: Install Python dependencies
+        run: |
+          pip install -r keras/requirements-common.txt
+          pip install -r keras-mlx/requirements.txt
+
+      - name: Install keras-mlx
+        working-directory: ./keras-mlx
+        run: pip install -e .
+
+      - name: Verify installation
+        working-directory: ./keras
+        run: python -c "import keras; assert keras.backend.backend() == 'mlx'; import keras_mlx; print(keras_mlx.__version__)"
+
+      - name: Run Tests
+        working-directory: ./keras
+        run: pytest keras --ignore keras/src/applications --ignore keras/src/wrappers
 
       # TODO integration tests
 
