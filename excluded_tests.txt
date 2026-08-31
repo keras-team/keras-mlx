@@ -46,8 +46,6 @@ MathOpsCorrectnessTest::test_istft3
 MathOpsCorrectnessTest::test_istft4
 MathOpsCorrectnessTest::test_istft5
 MathOpsCorrectnessTest::test_istft6
-MathOpsCorrectnessTest::test_istft7
-MathOpsCorrectnessTest::test_istft8
 ModelCheckpointTest::test_model_checkpoint_options
 ModelTest::test_export_error
 ModelTest::test_functional_optional_inputs_generator_optional_none
