@@ -75,8 +75,12 @@ jobs:
       - name: Run the keras-mlx tests
         # These cover the behaviour the keras suite skips for this backend.
         # They are quick, so run them before the long suite below.
-        # Run from ./keras, which is where keras itself is importable from.
         working-directory: ./keras
+        env:
+          # tensorflow pulls a keras from PyPI that has no mlx backend, and
+          # pytest does not put the working directory on the path the way
+          # `python -c` does, so point at the checkout explicitly.
+          PYTHONPATH: ${{ github.workspace }}/keras
         run: pytest ../keras-mlx/keras_mlx
 
       - name: Run Tests
@@ -136,8 +140,12 @@ jobs:
       - name: Run the keras-mlx tests
         # These cover the behaviour the keras suite skips for this backend.
         # They are quick, so run them before the long suite below.
-        # Run from ./keras, which is where keras itself is importable from.
         working-directory: ./keras
+        env:
+          # tensorflow pulls a keras from PyPI that has no mlx backend, and
+          # pytest does not put the working directory on the path the way
+          # `python -c` does, so point at the checkout explicitly.
+          PYTHONPATH: ${{ github.workspace }}/keras
         run: pytest ../keras-mlx/keras_mlx
 
       - name: Run Tests
