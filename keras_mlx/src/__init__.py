@@ -8,7 +8,7 @@ from keras_mlx.src.variable import Variable
 
 SUPPORTS_SPARSE_TENSORS = False
 SUPPORTS_RAGGED_TENSORS = False
-SUPPORTS_COMPLEX_DTYPES = False
+SUPPORTS_COMPLEX_DTYPES = True
 # TODO: follow updates and adjust to thread safe when possible
 IS_THREAD_SAFE = False  # False as of mlx 0.24.0
 
