@@ -9,6 +9,11 @@ from keras.src.random.seed_generator import make_default_seed  # noqa: F401
 from keras_mlx.src.ops.core import convert_to_tensor
 from keras_mlx.src.ops.core import to_mlx_dtype
 
+# Rejection rounds for the Marsaglia and Tsang gamma sampler. Acceptance
+# is worst at alpha = 1, where it is about 0.952 per round, so 24 rounds
+# leave a rejection probability near 1e-31.
+GAMMA_ROUNDS = 24
+
 
 def mlx_draw_seed(seed):
     if isinstance(seed, mx.array):
@@ -108,62 +113,77 @@ def gamma(shape, alpha, dtype=None, seed=None):
 
     dtype = to_mlx_dtype(dtype or floatx())
 
-    if mx.array(alpha).size > 1:
-        raise NotImplementedError(
-            "The mlx backend only supports a scalar `alpha` for `gamma`."
-        )
-    if alpha <= 0:
-        raise ValueError(
-            "Invalid for argument `alpha`. Alpha must "
-            f"be > 0, received alpha={alpha}"
-        )
+    # The sampler below is elementwise, so broadcast alpha over the lanes and
+    # an array alpha costs no more than a scalar one. Flatten a single
+    # element first, its rank may exceed the output rank.
+    alpha = mx.array(alpha).astype(mx.float32)
+    if alpha.size == 1:
+        alpha = alpha.reshape(())
+    alpha = mx.broadcast_to(alpha, shape)
+    # Split the boost key up front. The loop can stop early, so a key taken
+    # after it would depend on how many rounds ran.
+    key, boost_key = mx.random.split(mlx_draw_seed(seed), 2)
 
-    key = mlx_draw_seed(seed)
-    # if alpha < 1, apply Gamma(alpha) = Gamma(alpha+1) * U^(1/alpha)
-    # where U is a random uniform variable
-    if alpha < 1.0:
-        # Split the key first so the inner gamma draw and u are independent.
-        gkey, ukey = mx.random.split(key)
-        gamma_alpha_plus_1 = gamma(shape, alpha + 1, dtype, seed=gkey)
-        u = mx.random.uniform(key=ukey, shape=shape)
-        return (gamma_alpha_plus_1 * (u ** (1.0 / alpha))).astype(dtype)
+    # Gamma(alpha) = Gamma(alpha + 1) * U ** (1 / alpha) below 1, so sample
+    # the boosted shape and correct after. Selected with `where` rather than
+    # branched on, so alpha may be traced.
+    below_one = alpha < 1.0
+    boosted = mx.where(below_one, alpha + 1.0, alpha)
 
-    # alpha >= 1 vectorized
-    # constants
-    d = alpha - 1.0 / 3.0
+    d = boosted - 1.0 / 3.0
     c = 1.0 / mx.sqrt(9.0 * d)
-
-    done = mx.zeros(shape=shape, dtype=mx.bool_)  # track acceptance
-    results = mx.zeros(shape=shape, dtype=dtype)
-
-    all_done = False
-    while not all_done:
+    done = mx.zeros(shape, dtype=mx.bool_)
+    results = mx.zeros(shape, dtype=mx.float32)
+    # A fixed round count keeps the rejection loop a static graph instead of
+    # a data dependent `while`, which cannot be traced. See GAMMA_ROUNDS.
+    for _ in range(GAMMA_ROUNDS):
         key, key_x, key_u = mx.random.split(key, 3)
 
         x = mx.random.normal(key=key_x, shape=shape)
         u = mx.random.uniform(key=key_u, shape=shape)
 
+        # A non positive v_ would make log(v) undefined, so mask those lanes
+        # out and keep a harmless value in them.
         v_ = 1.0 + c * x
+        usable = mx.logical_and(v_ > 0.0, mx.logical_not(done))
+        v = mx.where(usable, v_, 1.0) ** 3
 
-        not_done_mask = mx.logical_not(done)
+        # log(u) < 0.5 * x^2 + d * (1 - v + log(v))
+        accept = mx.logical_and(
+            usable, mx.log(u) < 0.5 * x * x + d * (1.0 - v + mx.log(v))
+        )
+        results = mx.where(accept, d * v, results)
+        done = mx.logical_or(done, accept)
 
-        # get mask of v_ <= 0 to reject bad values in log(v_ ** 3)
-        positive_mask = (v_ > 0.0) & not_done_mask
-        v = v_ * v_ * v_
+        # Stop once every lane has a sample. Reading `done` frees the
+        # round's intermediates, which is what keeps a large `shape` off the
+        # Metal buffer limit. While tracing the read is illegal, so all
+        # GAMMA_ROUNDS run instead.
+        try:
+            if bool(mx.all(done)):
+                break
+        except ValueError:
+            pass
 
-        # log(u) < 0.5*x^2 + d*(1 - v + log(v))
-        log_u = mx.log(u)
-        rhs = 0.5 * x * x + d * (1.0 - v + mx.log(v))
+    # d sits near the centre of the boosted distribution, a harmless stand in
+    # for the vanishingly rare lanes that never accepted.
+    results = mx.where(done, results, d)
 
-        accept_mask = positive_mask & (log_u < rhs)
+    # The correction is a no op once alpha reaches 1, so skip the extra draw
+    # when alpha is concrete. While tracing the value cannot be read, so it
+    # is built and selected with `where` instead.
+    try:
+        needs_correction = bool(mx.any(below_one))
+    except ValueError:
+        needs_correction = True
+    if not needs_correction:
+        return results.astype(dtype)
 
-        # store accepted d*v
-        new_samples = d * v
-        results = mx.where(accept_mask, new_samples, results)
-
-        done = mx.logical_or(done, accept_mask)
-        all_done = mx.all(done)
-
+    u = mx.random.uniform(key=boost_key, shape=shape)
+    correction = mx.where(below_one, u ** (1.0 / alpha), 1.0)
+    # A non positive alpha has no gamma distribution. jax, torch and
+    # tensorflow return nan there rather than raising, so match them.
+    results = mx.where(alpha > 0.0, results * correction, mx.array(mx.nan))
     return results.astype(dtype)
 
 
@@ -174,43 +194,21 @@ def beta(shape, alpha, beta, dtype=None, seed=None):
     if isinstance(shape, int):
         shape = (shape,)
 
+    # No range check, reading the values is illegal while tracing and jax,
+    # torch and tensorflow do not validate either.
     alpha_arr = mx.array(alpha, dtype=mx.float32)
     beta_arr = mx.array(beta, dtype=mx.float32)
 
-    if mx.any(alpha_arr <= 0.0):
-        raise ValueError(
-            "Invalid value for argument `alpha`. All alpha "
-            f"values must be > 0, received alpha={alpha}"
-        )
-    if mx.any(beta_arr <= 0.0):
-        raise ValueError(
-            "Invalid value for argument `beta`. All beta "
-            f"values must be > 0, received beta={beta}"
-        )
-
     key = mlx_draw_seed(seed)
-    if alpha_arr.size == 1 and beta_arr.size == 1:
-        alpha_scalar = alpha_arr.item()
-        beta_scalar = beta_arr.item()
-        key_x, key_y = mx.random.split(key, 2)
-        x = gamma(shape, alpha_scalar, dtype=dtype, seed=key_x)
-        y = gamma(shape, beta_scalar, dtype=dtype, seed=key_y)
-        return (x / (x + y)).astype(dtype)
-    else:
-        # Broadcast alpha and beta to the output shape, then draw each element
-        # independently. mlx has no array-parameter gamma. This mirrors how
-        # binomial broadcasts its parameters.
-        zeros_for_bcast = mx.zeros(shape, dtype=mx.float32)
-        alpha_flat = (alpha_arr + zeros_for_bcast).reshape(-1)
-        beta_flat = (beta_arr + zeros_for_bcast).reshape(-1)
-        carry_key = key
-        results = []
-        for i in range(alpha_flat.size):
-            carry_key, key_x, key_y = mx.random.split(carry_key, 3)
-            x = gamma((1,), alpha_flat[i].item(), dtype=dtype, seed=key_x)
-            y = gamma((1,), beta_flat[i].item(), dtype=dtype, seed=key_y)
-            results.append((x / (x + y))[0])
-        return mx.stack(results).reshape(shape).astype(dtype)
+    key_x, key_y = mx.random.split(key, 2)
+    x = gamma(shape, alpha_arr, dtype=dtype, seed=key_x)
+    y = gamma(shape, beta_arr, dtype=dtype, seed=key_y)
+    # Both draws can underflow to zero for a small alpha, and 0/0 is nan,
+    # which is outside the support. jax and numpy return zero there.
+    total = x + y
+    nonzero = total > 0
+    ratio = x / mx.where(nonzero, total, 1)
+    return mx.where(nonzero, ratio, 0).astype(dtype)
 
 
 def binomial(shape, counts, probabilities, dtype=None, seed=None):

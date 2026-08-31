@@ -66,7 +66,6 @@ OrbaxCheckpointTest::test_checkpoint_saving_basic0
 OrbaxCheckpointTest::test_training_resumption_1
 OrbaxCheckpointTest::test_training_resumption_2
 QuantizersTest::test_quantize_and_dequantize
-RandomCorrectnessTest
 RandomCropTest::test_dict_input
 RandomCropTest::test_random_crop
 RematTest::test_remat_with_kwargs
