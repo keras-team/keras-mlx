@@ -908,6 +908,11 @@ def minimum(x1, x2):
 
 def mod(x1, x2):
     x1, x2 = _promote(x1, x2)
+    if "int" in standardize_dtype(x2.dtype):
+        # See floor_divide, an integer remainder by zero traps the same way.
+        zero = x2 == 0
+        r = mx.remainder(x1, mx.where(zero, mx.ones_like(x2), x2))
+        return mx.where(zero, mx.zeros_like(r), r)
     return mx.remainder(x1, x2)
 
 
@@ -1549,11 +1554,17 @@ def floor_divide(x1, x2):
     x1 = convert_to_tensor(x1, dtype=dtype)
     x2 = convert_to_tensor(x2, dtype=dtype)
     if "int" in standardize_dtype(dtype):
+        # An integer divide by zero traps in hardware and takes the process
+        # down with SIGFPE, so divide by one wherever the divisor is zero and
+        # select the answer back out afterwards. numpy returns zero there.
+        zero = x2 == 0
+        divisor = mx.where(zero, mx.ones_like(x2), x2)
         # mlx `//` truncates toward zero for integers, so correct the quotient
         # down by one when the remainder forces a floor toward -inf.
-        q = x1 // x2
-        r = x1 - q * x2
-        return mx.where((r != 0) & ((r < 0) != (x2 < 0)), q - 1, q)
+        q = x1 // divisor
+        r = x1 - q * divisor
+        q = mx.where((r != 0) & ((r < 0) != (divisor < 0)), q - 1, q)
+        return mx.where(zero, mx.zeros_like(q), q)
     return mx.floor(x1 / x2)
 
 
