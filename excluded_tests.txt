@@ -55,9 +55,6 @@ ModelTest::test_functional_optional_inputs_optional_none
 ModelTest::test_quantize_float8
 MuonTest::test_model_fit
 NNOpsDynamicShapeTest::test_softmax_in_graph
-NumpyDtypeTest::test_dot_
-NumpyDtypeTest::test_inner_
-NumpyDtypeTest::test_tensordot_
 NumpyOneInputOpsCorrectnessTest::test_argpartition
 NumpyOneInputOpsDynamicShapeTest::test_argmax_negative_zero
 NumpyOneInputOpsDynamicShapeTest::test_argmin_negative_zero
