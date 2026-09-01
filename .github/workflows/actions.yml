@@ -154,3 +154,9 @@ jobs:
         run: |
           ruff check .
           ruff format --check .
+
+      - name: Check the test exclusions
+        # keras matches these patterns as substrings, so a line can gate far
+        # more than it names. This needs no keras and no mlx, so it belongs
+        # here rather than in the test jobs.
+        run: python tools/check_excluded_tests.py
