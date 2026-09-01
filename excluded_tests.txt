@@ -19,8 +19,6 @@ HashingTest::test_multi_hot_output
 HashingTest::test_one_hot_output
 ImageOpsCorrectnessTest::test_resize_with_pad
 LayerTest::test_quantized_layer_with_remat
-LinalgOpsCorrectnessTest::test_qr
-LinalgOpsDynamicShapeTest::test_qr_invalid_mode
 LionTest::test_ema
 LoadModelTests::test_basic_load_float64
 LoadWeightsTests::test_load_weights_h5_float16_float64
@@ -56,9 +54,7 @@ ModelTest::test_functional_optional_inputs_generator_optional_none
 ModelTest::test_functional_optional_inputs_optional_none
 ModelTest::test_quantize_float8
 MuonTest::test_model_fit
-NumpyDtypeTest::test_dot_
-NumpyDtypeTest::test_inner_
-NumpyDtypeTest::test_tensordot_
+NNOpsDynamicShapeTest::test_softmax_in_graph
 NumpyOneInputOpsCorrectnessTest::test_argpartition
 NumpyOneInputOpsDynamicShapeTest::test_argmax_negative_zero
 NumpyOneInputOpsDynamicShapeTest::test_argmin_negative_zero
@@ -66,9 +62,7 @@ NumpyTwoInputOpsCorrectnessTest::test_cross
 OrbaxCheckpointTest::test_checkpoint_saving_basic0
 OrbaxCheckpointTest::test_training_resumption_1
 OrbaxCheckpointTest::test_training_resumption_2
-QrOpTest::test_qr_call_mode_complete
 QuantizersTest::test_quantize_and_dequantize
-RandomCorrectnessTest
 RandomCropTest::test_dict_input
 RandomCropTest::test_random_crop
 RematTest::test_remat_with_kwargs

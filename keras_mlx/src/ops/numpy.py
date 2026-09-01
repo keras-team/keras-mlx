@@ -32,6 +32,27 @@ def add(x1, x2):
     return mx.add(x1, x2)
 
 
+def _contraction_dtypes(result_dtype):
+    """The compute and result dtypes for a contraction.
+
+    mlx has no integer contraction kernel, so integer and bool inputs run in
+    float32 and cast back, which is what `matmul` already did. That holds
+    exactly to 2**24, and it is the products that have to fit, not the
+    inputs.
+
+    Args:
+        result_dtype: The promoted dtype the contraction should return.
+
+    Returns:
+        The dtype to compute in and the dtype to return.
+    """
+    out_dtype = to_mlx_dtype(result_dtype)
+    standardized = standardize_dtype(result_dtype)
+    if "int" in standardized or standardized == "bool":
+        return mx.float32, out_dtype
+    return out_dtype, out_dtype
+
+
 def einsum(subscripts, *operands, **kwargs):
     operands = [convert_to_tensor(x) for x in operands]
     dtypes_to_resolve = list({standardize_dtype(x.dtype) for x in operands})
@@ -40,15 +61,10 @@ def einsum(subscripts, *operands, **kwargs):
         result_dtype = "int32"
     else:
         result_dtype = result_type(*[x.dtype for x in operands])
-    # mlx einsum only supports floating point, so integer contractions run in
-    # float32 and are cast back to the integer result dtype.
-    if "int" in result_dtype or result_dtype == "bool":
-        compute_dtype = mx.float32
-    else:
-        compute_dtype = to_mlx_dtype(result_dtype)
+    compute_dtype, out_dtype = _contraction_dtypes(result_dtype)
     operands = [x.astype(compute_dtype) for x in operands]
     out = mx.einsum(subscripts, *operands)
-    return out.astype(to_mlx_dtype(result_dtype))
+    return out.astype(out_dtype)
 
 
 def subtract(x1, x2):
@@ -65,14 +81,9 @@ def matmul(x1, x2):
         result_dtype = "int32"
     else:
         result_dtype = result_type(x1.dtype, x2.dtype)
-    # mlx matmul only supports floating point, so integer matmuls run in
-    # float32 and are cast back to the integer result dtype.
-    if "int" in result_dtype or result_dtype == "bool":
-        compute_dtype = mx.float32
-    else:
-        compute_dtype = to_mlx_dtype(result_dtype)
+    compute_dtype, out_dtype = _contraction_dtypes(result_dtype)
     out = mx.matmul(x1.astype(compute_dtype), x2.astype(compute_dtype))
-    return out.astype(to_mlx_dtype(result_dtype))
+    return out.astype(out_dtype)
 
 
 def multiply(x1, x2):
@@ -268,6 +279,11 @@ def argmin(x, axis=None, keepdims=False):
 def argsort(x, axis=-1):
     x = convert_to_tensor(x)
     axis = None if x.ndim == 0 else axis
+    # mlx sizes the sort from the element count and divides by it, so an empty
+    # input takes the process down with SIGFPE on the cpu backend. There is
+    # nothing to order, so return the empty result.
+    if x.size == 0:
+        return mx.zeros((0,) if axis is None else x.shape, dtype=mx.int32)
     # Metal has no bool sort kernel, sort bool keys as int8.
     if x.dtype == mx.bool_:
         x = x.astype(mx.int8)
@@ -541,6 +557,9 @@ def cumprod(x, axis=None, dtype=None):
     if dtype == "bool":
         dtype = "int32"
     x = cast(x, dtype)
+    # See argsort, an empty input crashes the scan the same way.
+    if x.size == 0:
+        return mx.reshape(x, (0,)) if axis is None else x
     if x.dtype in [mx.int64, mx.uint64]:
         return mx.cumprod(
             x, axis=axis, stream=mx.Device(type=mx.DeviceType.cpu)
@@ -552,6 +571,13 @@ def cumsum(x, axis=None, dtype=None):
     x = convert_to_tensor(x)
     if dtype is not None:
         x = cast(x, dtype)
+    # mx.cumsum accumulates bool into int32. Do it here so the empty result
+    # below carries the same dtype the populated one would.
+    if x.dtype == mx.bool_:
+        x = cast(x, "int32")
+    # See argsort, an empty input crashes the scan the same way.
+    if x.size == 0:
+        return mx.reshape(x, (0,)) if axis is None else x
     if x.dtype in [mx.int64, mx.uint64]:
         return mx.cumsum(x, axis=axis, stream=mx.Device(type=mx.DeviceType.cpu))
     return mx.cumsum(x, axis=axis)
@@ -599,26 +625,30 @@ def digitize(x, bins):
 def dot(x1, x2):
     x = convert_to_tensor(x1)
     y = convert_to_tensor(x2)
+    compute_dtype, out_dtype = _contraction_dtypes(
+        result_type(x.dtype, y.dtype)
+    )
 
     ndimx = x.ndim
     ndimy = y.ndim
 
-    if ndimx == ndimy == 1:
-        return (x[None] @ y[:, None]).reshape(())
-
-    if ndimx == ndimy == 2:
-        return x @ y
-
+    # A scalar on either side is a plain multiply, which needs no contraction
+    # kernel and so keeps the integer types it was given.
     if ndimx == 0 or ndimy == 0:
-        return x * y
+        return (x * y).astype(out_dtype)
 
-    if ndimy == 1:
-        r = x @ y
-        return r
+    x = x.astype(compute_dtype)
+    y = y.astype(compute_dtype)
+
+    if ndimx == ndimy == 1:
+        return (x[None] @ y[:, None]).reshape(()).astype(out_dtype)
+
+    if ndimx == ndimy == 2 or ndimy == 1:
+        return (x @ y).astype(out_dtype)
 
     # else if ndimy >= 2: numpy contracts the last axis of x with the second
     # to last axis of y, which matmul cannot express once x is not 2-D.
-    return mx.tensordot(x, y, axes=[[-1], [-2]])
+    return mx.tensordot(x, y, axes=[[-1], [-2]]).astype(out_dtype)
 
 
 def empty(shape, dtype=None):
@@ -908,6 +938,11 @@ def minimum(x1, x2):
 
 def mod(x1, x2):
     x1, x2 = _promote(x1, x2)
+    if "int" in standardize_dtype(x2.dtype):
+        # See floor_divide, an integer remainder by zero traps the same way.
+        zero = x2 == 0
+        r = mx.remainder(x1, mx.where(zero, mx.ones_like(x2), x2))
+        return mx.where(zero, mx.zeros_like(r), r)
     return mx.remainder(x1, x2)
 
 
@@ -1287,6 +1322,10 @@ def size(x):
 
 def sort(x, axis=-1):
     x = convert_to_tensor(x)
+    # See argsort, an empty input crashes the same way. Sorting nothing gives
+    # the input back.
+    if x.size == 0:
+        return mx.reshape(x, (0,)) if axis is None else x
     # Metal has no bool sort kernel, sort bool values as int8. bool carries
     # no gradient so it can use mx.sort directly.
     if x.dtype == mx.bool_:
@@ -1342,13 +1381,18 @@ def tanh(x):
 def tensordot(x1, x2, axes=2):
     x1 = convert_to_tensor(x1)
     x2 = convert_to_tensor(x2)
+    compute_dtype, out_dtype = _contraction_dtypes(
+        result_type(x1.dtype, x2.dtype)
+    )
+    x1 = x1.astype(compute_dtype)
+    x2 = x2.astype(compute_dtype)
 
     if isinstance(axes, int):
-        return mx.tensordot(x1, x2, axes)
+        return mx.tensordot(x1, x2, axes).astype(out_dtype)
     elif isinstance(axes, (list, tuple)):
         if not isinstance(axes[0], (list, tuple)):
             axes = [[axes[0]], [axes[1]]]
-        return mx.tensordot(x1, x2, axes)
+        return mx.tensordot(x1, x2, axes).astype(out_dtype)
 
     raise ValueError(
         f"`axes` must be an integer or sequence Received: axes={axes}"
@@ -1421,7 +1465,11 @@ def vdot(x1, x2):
 def inner(x1, x2):
     x1 = convert_to_tensor(x1)
     x2 = convert_to_tensor(x2)
-    return mx.inner(x1, x2)
+    compute_dtype, out_dtype = _contraction_dtypes(
+        result_type(x1.dtype, x2.dtype)
+    )
+    out = mx.inner(x1.astype(compute_dtype), x2.astype(compute_dtype))
+    return out.astype(out_dtype)
 
 
 def vstack(xs):
@@ -1549,11 +1597,17 @@ def floor_divide(x1, x2):
     x1 = convert_to_tensor(x1, dtype=dtype)
     x2 = convert_to_tensor(x2, dtype=dtype)
     if "int" in standardize_dtype(dtype):
+        # An integer divide by zero traps in hardware and takes the process
+        # down with SIGFPE, so divide by one wherever the divisor is zero and
+        # select the answer back out afterwards. numpy returns zero there.
+        zero = x2 == 0
+        divisor = mx.where(zero, mx.ones_like(x2), x2)
         # mlx `//` truncates toward zero for integers, so correct the quotient
         # down by one when the remainder forces a floor toward -inf.
-        q = x1 // x2
-        r = x1 - q * x2
-        return mx.where((r != 0) & ((r < 0) != (x2 < 0)), q - 1, q)
+        q = x1 // divisor
+        r = x1 - q * divisor
+        q = mx.where((r != 0) & ((r < 0) != (divisor < 0)), q - 1, q)
+        return mx.where(zero, mx.zeros_like(q), q)
     return mx.floor(x1 / x2)
 
 
@@ -1923,17 +1977,6 @@ def angle(x):
     re = cast(re, dtype)
     im = cast(im, dtype)
     return mx.arctan2(im, re)
-
-
-def _to_numpy(*xs):
-    # numpy cannot read mlx bfloat16 arrays, so upcast to float32 first. This
-    # is only used by ops that fall back to numpy for unsupported primitives.
-    out = []
-    for x in xs:
-        if isinstance(x, mx.array) and x.dtype == mx.bfloat16:
-            x = x.astype(mx.float32)
-        out.append(np.asarray(x))
-    return out[0] if len(out) == 1 else out
 
 
 def _np_axis(axis):
