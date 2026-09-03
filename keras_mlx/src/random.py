@@ -8,6 +8,7 @@ from keras.src.random.seed_generator import draw_seed
 from keras.src.random.seed_generator import make_default_seed  # noqa: F401
 from keras_mlx.src.ops.core import convert_to_tensor
 from keras_mlx.src.ops.core import to_mlx_dtype
+from keras_mlx.src.ops.numpy import _nan_scalar
 
 # Rejection rounds for the Marsaglia and Tsang gamma sampler. Acceptance
 # is worst at alpha = 1, where it is about 0.952 per round, so 24 rounds
@@ -183,7 +184,9 @@ def gamma(shape, alpha, dtype=None, seed=None):
     correction = mx.where(below_one, u ** (1.0 / alpha), 1.0)
     # A non positive alpha has no gamma distribution. jax, torch and
     # tensorflow return nan there rather than raising, so match them.
-    results = mx.where(alpha > 0.0, results * correction, mx.array(mx.nan))
+    results = mx.where(
+        alpha > 0.0, results * correction, _nan_scalar(results.dtype)
+    )
     return results.astype(dtype)
 
 
