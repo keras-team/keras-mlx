@@ -1114,6 +1114,13 @@ def prod(x, axis=None, keepdims=False, dtype=None):
 
 def _quantile_prep(x):
     x = convert_to_tensor(x)
+    # The index math divides by the reduced axis length, which is SIGFPE on
+    # an empty one. jax and torch reject an empty input.
+    if x.size == 0:
+        raise ValueError(
+            "Cannot compute a quantile of an empty array. "
+            f"Received: x.shape={x.shape}"
+        )
     ori_dtype = standardize_dtype(x.dtype)
     if ori_dtype == "bool":
         x = x.astype(to_mlx_dtype(config.floatx()))
@@ -1365,8 +1372,7 @@ def take(x, indices, axis=None):
 def take_along_axis(x, indices, axis=None):
     x = convert_to_tensor(x)
     indices = convert_to_tensor(indices)
-    # mlx aborts the process with SIGABRT on a non integer index rather than
-    # raising, so check here. numpy and jax both reject it too.
+    # mlx aborts with SIGABRT on a non integer index. numpy and jax raise.
     indices_dtype = standardize_dtype(indices.dtype)
     if "int" not in indices_dtype:
         raise ValueError(
@@ -1434,9 +1440,8 @@ def tri(N, M=None, k=0, dtype=None):
 
 def tril(x, k=0):
     x = convert_to_tensor(x)
-    # Without this the shape lookup below raises `tuple index out of range`,
-    # which names neither the op nor the problem. jax and torch reject
-    # anything under 2D too.
+    # Otherwise the shape lookup raises `tuple index out of range`, which
+    # names nothing. jax and torch reject under 2D too.
     if x.ndim < 2:
         raise ValueError(
             "Argument to `tril` must be at least 2D. "
@@ -1784,8 +1789,7 @@ def unravel_index(indices, shape):
             f"`shape` argument cannot contain `None`. Received: shape={shape}"
         )
 
-    # An integer remainder against a zero dimension traps in hardware and
-    # takes the process down with SIGFPE. numpy and torch both raise here.
+    # A remainder against a zero dimension is SIGFPE. numpy and torch raise.
     if 0 in shape:
         raise ValueError(
             "`shape` argument cannot contain a zero dimension, an empty "

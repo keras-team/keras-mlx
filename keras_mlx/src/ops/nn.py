@@ -245,9 +245,8 @@ def sparsemax(x, axis=-1):
     # through the inverse of the sort permutation instead of the forward one
     # and so returns gradients against the wrong elements.
     logits = convert_to_tensor(x)
-    # mlx sizes the sort and the scan below from the element count and divides
-    # by it, so an empty input takes the process down with SIGFPE on the cpu
-    # backend. Nothing to project, and tau is zero when there is no support.
+    # An empty input divides by the element count in the sort and the scan,
+    # which is SIGFPE on the cpu backend.
     if logits.size == 0:
         return mx.maximum(logits - 0.0, 0.0)
     order = mx.argsort(-1.0 * logits, axis=axis)

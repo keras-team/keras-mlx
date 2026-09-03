@@ -1,9 +1,7 @@
 """Tests for inputs that used to end the process instead of raising.
 
-mlx traps in hardware on an integer remainder against zero and aborts on a
-bad index dtype, so these die with SIGFPE and SIGABRT on the cpu backend. A
-crash takes the worker down before pytest can record anything, which is why
-`excluded_tests.txt` cannot express them and why they are covered here.
+A crash takes the worker down before pytest can record it, so none of these
+can be expressed in `excluded_tests.txt`.
 """
 
 import numpy as np
@@ -13,8 +11,6 @@ from keras.src import ops
 
 
 def test_unravel_index_rejects_a_zero_dimension():
-    # Every remainder is taken against a dimension, so a zero one is an
-    # integer divide by zero. numpy and torch both raise.
     with pytest.raises(ValueError, match="zero dimension"):
         ops.unravel_index(np.array([3], "int32"), (0, 2))
 
@@ -55,7 +51,43 @@ def test_tril_and_triu_still_work(op_name):
     assert ops.convert_to_numpy(out).shape == (2, 3)
 
 
+@pytest.mark.parametrize(
+    "op_name,extra",
+    [
+        ("quantile", (0.5,)),
+        ("percentile", (50,)),
+        ("nanquantile", (0.5,)),
+        ("nanpercentile", (50,)),
+        ("nanmedian", ()),
+    ],
+)
+def test_quantile_family_rejects_an_empty_input(op_name, extra):
+    with pytest.raises(ValueError, match="quantile of an empty array"):
+        getattr(ops, op_name)(np.zeros((0,), "float32"), *extra)
+
+
+@pytest.mark.parametrize("shape,axis", [((0, 3), 1), ((3, 0), 0)])
+def test_quantile_rejects_an_empty_input_it_does_not_reduce(shape, axis):
+    with pytest.raises(ValueError, match="quantile of an empty array"):
+        ops.quantile(np.zeros(shape, "float32"), 0.5, axis=axis)
+
+
+@pytest.mark.parametrize(
+    "op_name,extra",
+    [
+        ("quantile", (0.5,)),
+        ("percentile", (50,)),
+        ("nanquantile", (0.5,)),
+        ("nanpercentile", (50,)),
+        ("nanmedian", ()),
+        ("median", ()),
+    ],
+)
+def test_quantile_family_still_works(op_name, extra):
+    out = getattr(ops, op_name)(np.array([1.0, 2.0, 3.0, 4.0]), *extra)
+
+    assert float(ops.convert_to_numpy(out)) == 2.5
+
+
 def test_tri_still_works():
-    # `tri` builds a 2D array and calls `tril`, so the new guard must not
-    # reject it.
     assert ops.convert_to_numpy(ops.tri(3)).shape == (3, 3)

@@ -1,8 +1,7 @@
 """Tests for inputs that used to end the process instead of raising.
 
-`sparsemax` sorts and then scans, and mlx sizes both from the element count
-and divides by it, so an empty input dies with SIGFPE on the cpu backend
-before pytest can record anything. See `numpy_test.py` for the rest.
+An empty input to `sparsemax` is SIGFPE on the cpu backend. See
+`numpy_test.py` for the rest.
 """
 
 import numpy as np
@@ -22,8 +21,7 @@ def test_sparsemax_handles_an_empty_input(shape):
     "dtype,expected", [("float32", "float32"), ("int32", "float32")]
 )
 def test_sparsemax_empty_keeps_the_dtype_of_the_full_path(dtype, expected):
-    # An integer input promotes to float when there is something to project,
-    # so the empty result has to promote the same way.
+    # An integer input promotes to float, so the empty result must too.
     empty = ops.convert_to_numpy(ops.sparsemax(np.zeros((0,), dtype)))
     full = ops.convert_to_numpy(ops.sparsemax(np.zeros((3,), dtype)))
 
