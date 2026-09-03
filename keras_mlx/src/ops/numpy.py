@@ -1114,6 +1114,13 @@ def prod(x, axis=None, keepdims=False, dtype=None):
 
 def _quantile_prep(x):
     x = convert_to_tensor(x)
+    # The index math divides by the reduced axis length, which is SIGFPE on
+    # an empty one. jax and torch reject an empty input.
+    if x.size == 0:
+        raise ValueError(
+            "Cannot compute a quantile of an empty array. "
+            f"Received: x.shape={x.shape}"
+        )
     ori_dtype = standardize_dtype(x.dtype)
     if ori_dtype == "bool":
         x = x.astype(to_mlx_dtype(config.floatx()))
@@ -1365,6 +1372,13 @@ def take(x, indices, axis=None):
 def take_along_axis(x, indices, axis=None):
     x = convert_to_tensor(x)
     indices = convert_to_tensor(indices)
+    # mlx aborts with SIGABRT on a non integer index. numpy and jax raise.
+    indices_dtype = standardize_dtype(indices.dtype)
+    if "int" not in indices_dtype:
+        raise ValueError(
+            "`indices` must be an integer array. "
+            f"Received: indices.dtype={indices_dtype}"
+        )
     return mx.take_along_axis(x, indices, axis=axis)
 
 
@@ -1426,6 +1440,13 @@ def tri(N, M=None, k=0, dtype=None):
 
 def tril(x, k=0):
     x = convert_to_tensor(x)
+    # Otherwise the shape lookup raises `tuple index out of range`, which
+    # names nothing. jax and torch reject under 2D too.
+    if x.ndim < 2:
+        raise ValueError(
+            "Argument to `tril` must be at least 2D. "
+            f"Received: x.shape={x.shape}"
+        )
 
     idx_y = mx.arange(x.shape[-2])
     idx_x = mx.arange(x.shape[-1])
@@ -1436,6 +1457,12 @@ def tril(x, k=0):
 
 def triu(x, k=0):
     x = convert_to_tensor(x)
+    # See tril.
+    if x.ndim < 2:
+        raise ValueError(
+            "Argument to `triu` must be at least 2D. "
+            f"Received: x.shape={x.shape}"
+        )
 
     idx_y = mx.arange(x.shape[-2])
     idx_x = mx.arange(x.shape[-1])
@@ -1760,6 +1787,13 @@ def unravel_index(indices, shape):
     if None in shape:
         raise ValueError(
             f"`shape` argument cannot contain `None`. Received: shape={shape}"
+        )
+
+    # A remainder against a zero dimension is SIGFPE. numpy and torch raise.
+    if 0 in shape:
+        raise ValueError(
+            "`shape` argument cannot contain a zero dimension, an empty "
+            f"array has no valid index. Received: shape={shape}"
         )
 
     # Peel the coordinates off the trailing axis first, so every remainder is

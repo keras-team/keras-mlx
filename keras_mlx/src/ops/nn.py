@@ -245,6 +245,10 @@ def sparsemax(x, axis=-1):
     # through the inverse of the sort permutation instead of the forward one
     # and so returns gradients against the wrong elements.
     logits = convert_to_tensor(x)
+    # An empty input divides by the element count in the sort and the scan,
+    # which is SIGFPE on the cpu backend.
+    if logits.size == 0:
+        return mx.maximum(logits - 0.0, 0.0)
     order = mx.argsort(-1.0 * logits, axis=axis)
     logits_sorted = mx.take_along_axis(logits, order, axis=axis)
     logits_cumsum = mx.cumsum(logits_sorted, axis=axis)  # find cumulative sum
