@@ -1434,6 +1434,14 @@ def tri(N, M=None, k=0, dtype=None):
 
 def tril(x, k=0):
     x = convert_to_tensor(x)
+    # Without this the shape lookup below raises `tuple index out of range`,
+    # which names neither the op nor the problem. jax and torch reject
+    # anything under 2D too.
+    if x.ndim < 2:
+        raise ValueError(
+            "Argument to `tril` must be at least 2D. "
+            f"Received: x.shape={x.shape}"
+        )
 
     idx_y = mx.arange(x.shape[-2])
     idx_x = mx.arange(x.shape[-1])
@@ -1444,6 +1452,12 @@ def tril(x, k=0):
 
 def triu(x, k=0):
     x = convert_to_tensor(x)
+    # See tril.
+    if x.ndim < 2:
+        raise ValueError(
+            "Argument to `triu` must be at least 2D. "
+            f"Received: x.shape={x.shape}"
+        )
 
     idx_y = mx.arange(x.shape[-2])
     idx_x = mx.arange(x.shape[-1])
