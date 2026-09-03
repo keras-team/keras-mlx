@@ -23,6 +23,7 @@ from keras_mlx.src.ops.core import convert_to_tensor
 from keras_mlx.src.ops.core import reverse_sequence
 from keras_mlx.src.ops.core import scan
 from keras_mlx.src.ops.core import to_mlx_dtype
+from keras_mlx.src.ops.numpy import _unique_prepare
 from keras_mlx.src.ops.numpy import flip
 
 
@@ -1019,29 +1020,37 @@ def _unique_2d(arr, size=None, fill_value=0, return_inverse=True):
             "unique_2d only supports 2 dimensional arrays"
         )
 
-    unique_set = set()
-    indices = []
+    n, width = arr.shape
+    if n == 0:
+        rows = 0 if size is None else size
+        unique_vals = mx.full((rows, width), fill_value, dtype=arr.dtype)
+        if return_inverse:
+            return unique_vals, mx.zeros((0,), dtype=mx.int32)
+        return unique_vals
 
-    for i, row in enumerate(arr):
-        row_tuple = tuple(row.tolist())
-        if row_tuple not in unique_set:
-            unique_set.add(row_tuple)
-            indices.append(i)
-
-    unique_vals = mx.array([list(t) for t in sorted(unique_set)])
+    # The lexicographic row sort puts equal rows next to each other and marks
+    # each group start, which is the same ordering the host side sorted set
+    # used to give.
+    order, sorted_arr, is_new, new_pos, _ = _unique_prepare(arr, 2)
+    unique_vals = mx.take(sorted_arr, new_pos, axis=0)
 
     if size is not None:
-        pad_rows = size - len(unique_vals)
+        pad_rows = size - unique_vals.shape[0]
         if pad_rows > 0:
-            padding = mx.full((pad_rows, arr.shape[1]), fill_value)
+            padding = mx.full(
+                (pad_rows, width), fill_value, dtype=unique_vals.dtype
+            )
             unique_vals = mx.concatenate([unique_vals, padding])
 
-    unique_dict = {tuple(row.tolist()): i for i, row in enumerate(unique_vals)}
-    inverse = mx.array([unique_dict[tuple(row.tolist())] for row in arr])
     if return_inverse:
+        # Counting the group starts numbers every sorted row with the row of
+        # unique_vals it came from, and order carries those numbers back to
+        # the positions the rows had in arr.
+        group = mx.cumsum(is_new.astype(mx.int32)) - 1
+        inverse = mx.zeros((n,), dtype=mx.int32)
+        inverse[order] = group
         return unique_vals, inverse
-    else:
-        return unique_vals
+    return unique_vals
 
 
 def _ctc_beam_search_decode(
