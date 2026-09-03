@@ -1365,6 +1365,14 @@ def take(x, indices, axis=None):
 def take_along_axis(x, indices, axis=None):
     x = convert_to_tensor(x)
     indices = convert_to_tensor(indices)
+    # mlx aborts the process with SIGABRT on a non integer index rather than
+    # raising, so check here. numpy and jax both reject it too.
+    indices_dtype = standardize_dtype(indices.dtype)
+    if "int" not in indices_dtype:
+        raise ValueError(
+            "`indices` must be an integer array. "
+            f"Received: indices.dtype={indices_dtype}"
+        )
     return mx.take_along_axis(x, indices, axis=axis)
 
 
@@ -1760,6 +1768,14 @@ def unravel_index(indices, shape):
     if None in shape:
         raise ValueError(
             f"`shape` argument cannot contain `None`. Received: shape={shape}"
+        )
+
+    # An integer remainder against a zero dimension traps in hardware and
+    # takes the process down with SIGFPE. numpy and torch both raise here.
+    if 0 in shape:
+        raise ValueError(
+            "`shape` argument cannot contain a zero dimension, an empty "
+            f"array has no valid index. Received: shape={shape}"
         )
 
     # Peel the coordinates off the trailing axis first, so every remainder is
