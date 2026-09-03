@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "keras-mlx"
 authors = [
-    {name = "MLX Developers", email = "mlx@group.apple.com"},
+    {name = "Keras team", email = "keras-users@googlegroups.com"},
 ]
 description = "MLX backend for Keras"
 readme = "README.md"
@@ -31,14 +31,11 @@ dependencies = [
 ]
 
 [project.urls]
-Home = "https://opensource.apple.com/projects/mlx/"
+Home = "https://keras.io/"
 Repository = "https://github.com/keras-team/keras-mlx/"
 
 [tool.setuptools.dynamic]
 version = {attr = "keras_mlx.src.version.__version__"}
-
-[tool.setuptools.package-dir]
-"" = "."
 
 [tool.ruff]
 line-length = 80
