@@ -559,7 +559,10 @@ def istft(
     if length is not None:
         end = start + length
     elif center is True:
-        end = -(fft_length // 2)
+        # Counting back from the expected length rather than from the end of
+        # the array. A negative index would be -0 when fft_length is 0 or 1,
+        # which empties the slice instead of keeping everything.
+        end = expected_output_len - (fft_length // 2)
     else:
         end = expected_output_len
     return x[..., start:end]
