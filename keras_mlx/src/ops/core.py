@@ -1,6 +1,5 @@
 import builtins
 import functools
-import warnings
 
 import ml_dtypes
 import mlx.core as mx
@@ -616,16 +615,32 @@ class custom_gradient:
     """
 
     def __init__(self, f):
-        warnings.warn(
-            "`custom_gradient` for the mlx backend acts as a pass-through to "
-            "support the forward pass. No gradient computation or modification "
-            "takes place."
-        )
         self.fun = f
 
     def __call__(self, *args, **kwargs):
-        outputs, _ = self.fun(*args, **kwargs)
-        return outputs
+        fun = self.fun
+        args = tree.map_structure(
+            lambda x: x.value if isinstance(x, Variable) else x, args
+        )
+
+        @mx.custom_function
+        def call(*primals):
+            outputs, _ = fun(*primals, **kwargs)
+            return outputs
+
+        @call.vjp
+        def call_vjp(primals, cotangent, output):
+            # mlx hands over a bare array for a single primal and a tuple for
+            # several, so normalise before handing them back to fun.
+            if not isinstance(primals, (tuple, list)):
+                primals = (primals,)
+            _, grad_fn = fun(*primals, **kwargs)
+            grads = grad_fn(cotangent)
+            if not isinstance(grads, (tuple, list)):
+                grads = (grads,)
+            return tuple(grads)
+
+        return call(*args)
 
 
 def remat(f):

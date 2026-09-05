@@ -72,6 +72,17 @@ jobs:
         working-directory: ./keras
         run: python -c "import keras; assert keras.backend.backend() == 'mlx'; import keras_mlx; print(keras_mlx.__version__)"
 
+      - name: Run the keras-mlx tests
+        # These cover the behaviour the keras suite skips for this backend.
+        # They are quick, so run them before the long suite below.
+        working-directory: ./keras
+        env:
+          # tensorflow pulls a keras from PyPI that has no mlx backend, and
+          # pytest does not put the working directory on the path the way
+          # `python -c` does, so point at the checkout explicitly.
+          PYTHONPATH: ${{ github.workspace }}/keras
+        run: pytest ../keras-mlx/keras_mlx
+
       - name: Run Tests
         working-directory: ./keras
         # Splitting across workers keeps each process small and means a worker
@@ -125,6 +136,17 @@ jobs:
       - name: Verify installation
         working-directory: ./keras
         run: python -c "import keras; assert keras.backend.backend() == 'mlx'; import keras_mlx; print(keras_mlx.__version__)"
+
+      - name: Run the keras-mlx tests
+        # These cover the behaviour the keras suite skips for this backend.
+        # They are quick, so run them before the long suite below.
+        working-directory: ./keras
+        env:
+          # tensorflow pulls a keras from PyPI that has no mlx backend, and
+          # pytest does not put the working directory on the path the way
+          # `python -c` does, so point at the checkout explicitly.
+          PYTHONPATH: ${{ github.workspace }}/keras
+        run: pytest ../keras-mlx/keras_mlx
 
       - name: Run Tests
         working-directory: ./keras
