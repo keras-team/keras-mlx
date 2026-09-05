@@ -331,22 +331,30 @@ def slice(inputs, start_indices, shape):
 
 def slice_update(inputs, start_indices, updates):
     inputs = convert_to_tensor(inputs)
-    if not isinstance(start_indices, (list, tuple)):
-        start_indices = convert_to_tensor(start_indices, dtype="int32").tolist()
-    else:
-        start_indices = [
-            i if isinstance(i, int) else i.item() for i in start_indices
-        ]
-    updates = convert_to_tensor(updates)
+    updates = convert_to_tensor(updates, dtype=inputs.dtype)
 
-    slices = tuple(
-        builtins.slice(start_index, start_index + update_length)
-        for start_index, update_length in zip(start_indices, updates.shape)
+    if isinstance(start_indices, (list, tuple)):
+        indices = [
+            i
+            if isinstance(i, mx.array) and i.ndim == 0
+            else mx.reshape(i, ())
+            if isinstance(i, mx.array)
+            else mx.array(i, dtype=mx.int32)
+            for i in start_indices
+        ]
+        start_indices = (
+            mx.stack(indices) if indices else mx.array([], dtype=mx.int32)
+        )
+    else:
+        start_indices = convert_to_tensor(start_indices, dtype="int32")
+
+    if start_indices.ndim == 0:
+        start_indices = mx.reshape(start_indices, (1,))
+
+    axes = tuple(range(start_indices.shape[0]))
+    return mx.slice_update(
+        inputs, updates, start_indices=start_indices, axes=axes
     )
-    # Copy so we do not mutate the caller's array or a Variable buffer.
-    inputs = mx.array(inputs)
-    inputs[slices] = updates
-    return inputs
 
 
 def switch(index, branches, *operands):
