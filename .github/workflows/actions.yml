@@ -79,7 +79,13 @@ jobs:
         # tests by file, which is how keras itself runs them.
         run: pytest keras -n auto --dist loadfile --ignore keras/src/applications --ignore keras/src/wrappers
 
-      # TODO integration tests
+      - name: Run the integration tests
+        working-directory: ./keras
+        env:
+          # tensorflow pulls a keras from PyPI that has no mlx backend, so
+          # point at the checkout explicitly.
+          PYTHONPATH: ${{ github.workspace }}/keras
+        run: pytest ../keras-mlx/integration_test.py
 
   run_macos_tests:
     # macos-latest is Apple silicon, so this is the only leg that runs Metal.
@@ -130,7 +136,13 @@ jobs:
         working-directory: ./keras
         run: pytest keras --ignore keras/src/applications --ignore keras/src/wrappers
 
-      # TODO integration tests
+      - name: Run the integration tests
+        working-directory: ./keras
+        env:
+          # tensorflow pulls a keras from PyPI that has no mlx backend, so
+          # point at the checkout explicitly.
+          PYTHONPATH: ${{ github.workspace }}/keras
+        run: pytest ../keras-mlx/integration_test.py
 
   format:
     name: Check the code format
