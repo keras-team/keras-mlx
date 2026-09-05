@@ -6,6 +6,12 @@ on:
   pull_request:
   release:
     types: [created]
+  schedule:
+    # Daily. A scheduled run tracks keras HEAD instead of the pin, so
+    # upstream drift is reported here rather than by whoever opens the next
+    # PR. See the keras checkout below.
+    - cron: '17 6 * * *'
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -55,9 +61,15 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           repository: keras-team/keras
-          ref: pluggable_backend
+          # Moving branch, so pin it or a green tick goes stale with no
+          # change here. A scheduled run takes HEAD, which says when to bump.
+          ref: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 'pluggable_backend' || '9bb0627aa04ede5f55cb6bdc8133b7203ad47893' }}
           path: keras
           persist-credentials: false
+
+      - name: Report the keras commit under test
+        working-directory: ./keras
+        run: git log -1 --format='keras at %H %ci %s'
 
       - name: Install Python dependencies
         run: |
@@ -109,9 +121,14 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           repository: keras-team/keras
-          ref: pluggable_backend
+          # See the linux job.
+          ref: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 'pluggable_backend' || '9bb0627aa04ede5f55cb6bdc8133b7203ad47893' }}
           path: keras
           persist-credentials: false
+
+      - name: Report the keras commit under test
+        working-directory: ./keras
+        run: git log -1 --format='keras at %H %ci %s'
 
       - name: Install Python dependencies
         run: |
