@@ -46,7 +46,6 @@ keras/src/ops/math_test.py::MathOpsCorrectnessTest::test_istft5
 keras/src/ops/math_test.py::MathOpsCorrectnessTest::test_istft6
 keras/src/ops/math_test.py::MathOpsCorrectnessTest::test_istft7
 keras/src/ops/math_test.py::MathOpsCorrectnessTest::test_istft8
-keras/src/ops/nn_test.py::NNOpsDynamicShapeTest::test_softmax_in_graph
 keras/src/ops/numpy_test.py::NumpyOneInputOpsCorrectnessTest::test_argpartition
 keras/src/ops/numpy_test.py::NumpyOneInputOpsDynamicShapeTest::test_argmax_negative_zero
 keras/src/ops/numpy_test.py::NumpyOneInputOpsDynamicShapeTest::test_argmin_negative_zero
@@ -103,7 +102,6 @@ keras/src/trainers/trainer_test.py::TestTrainer::test_callbacks_can_update_state
 keras/src/trainers/trainer_test.py::TestTrainer::test_evaluate_with_custom_test_step_dict
 keras/src/trainers/trainer_test.py::TestTrainer::test_evaluate_with_custom_test_step_flat
 keras/src/trainers/trainer_test.py::TestTrainer::test_fit_with_custom_train_step
-keras/src/trainers/trainer_test.py::TestTrainer::test_fit_with_data_adapter_native_array
 keras/src/trainers/trainer_test.py::TestTrainer::test_fit_with_val_split_eager
 keras/src/trainers/trainer_test.py::TestTrainer::test_fit_with_val_split_graph_fn
 keras/src/trainers/trainer_test.py::TestTrainer::test_fit_with_val_split_jit
