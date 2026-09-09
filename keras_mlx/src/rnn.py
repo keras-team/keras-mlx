@@ -4,6 +4,7 @@ import mlx.core as mx
 
 from keras.src import tree
 from keras.src.backend.common import stateless_scope
+from keras_mlx.src.ops.core import convert_to_tensor
 from keras_mlx.src.ops.core import reverse_sequence
 from keras_mlx.src.ops.core import scan
 from keras_mlx.src.ops.core import unstack
@@ -225,9 +226,106 @@ def cudnn_ok(*args, **kwargs):
     return False
 
 
-def lstm(*args, **kwargs):
-    raise NotImplementedError("lstm not yet implemented in mlx")
+def lstm(
+    inputs,
+    initial_state_h,
+    initial_state_c,
+    mask,
+    kernel,
+    recurrent_kernel,
+    bias,
+    activation,
+    recurrent_activation,
+    return_sequences=False,
+    go_backwards=False,
+    unroll=False,
+):
+    # Masking needs zero_output_for_mask, which only the generic loop has.
+    if mask is not None:
+        raise NotImplementedError
+
+    kernel = convert_to_tensor(kernel)
+    recurrent_kernel = convert_to_tensor(recurrent_kernel)
+    inputs = convert_to_tensor(inputs, dtype=kernel.dtype)
+    h = convert_to_tensor(initial_state_h, dtype=kernel.dtype)
+    c = convert_to_tensor(initial_state_c, dtype=kernel.dtype)
+    inputs = mx.swapaxes(inputs, 0, 1)
+    if go_backwards:
+        inputs = inputs[::-1]
+
+    # Project every timestep through the kernel in a single matmul, so the
+    # loop only carries the recurrent one.
+    x = mx.matmul(inputs, kernel)
+    if bias is not None:
+        x = x + convert_to_tensor(bias)
+
+    outputs = []
+    for x_t in x:
+        z = x_t + mx.matmul(h, recurrent_kernel)
+        z_i, z_f, z_c, z_o = mx.split(z, 4, axis=-1)
+        i = recurrent_activation(z_i)
+        f = recurrent_activation(z_f)
+        c = f * c + i * activation(z_c)
+        o = recurrent_activation(z_o)
+        h = o * activation(c)
+        outputs.append(h)
+
+    if return_sequences:
+        outputs = mx.stack(outputs, axis=1)
+    else:
+        outputs = mx.expand_dims(h, axis=1)
+    return h, outputs, [h, c]
 
 
-def gru(*args, **kwargs):
-    raise NotImplementedError("gru not yet implemented in mlx")
+def gru(
+    inputs,
+    initial_state,
+    mask,
+    kernel,
+    recurrent_kernel,
+    bias,
+    activation,
+    recurrent_activation,
+    return_sequences=False,
+    go_backwards=False,
+    unroll=False,
+    reset_after=True,
+):
+    # Masking needs zero_output_for_mask, which only the generic loop has,
+    # and reset_after=False splits the recurrent kernel per gate.
+    if mask is not None or not reset_after:
+        raise NotImplementedError
+
+    kernel = convert_to_tensor(kernel)
+    recurrent_kernel = convert_to_tensor(recurrent_kernel)
+    inputs = convert_to_tensor(inputs, dtype=kernel.dtype)
+    h = convert_to_tensor(initial_state, dtype=kernel.dtype)
+    inputs = mx.swapaxes(inputs, 0, 1)
+    if go_backwards:
+        inputs = inputs[::-1]
+
+    x = mx.matmul(inputs, kernel)
+    recurrent_bias = None
+    if bias is not None:
+        bias = convert_to_tensor(bias)
+        x = x + bias[0]
+        recurrent_bias = bias[1]
+
+    outputs = []
+    for x_t in x:
+        inner = mx.matmul(h, recurrent_kernel)
+        if recurrent_bias is not None:
+            inner = inner + recurrent_bias
+        x_z, x_r, x_h = mx.split(x_t, 3, axis=-1)
+        h_z, h_r, h_h = mx.split(inner, 3, axis=-1)
+        z = recurrent_activation(x_z + h_z)
+        r = recurrent_activation(x_r + h_r)
+        hh = activation(x_h + r * h_h)
+        h = z * h + (1 - z) * hh
+        outputs.append(h)
+
+    if return_sequences:
+        outputs = mx.stack(outputs, axis=1)
+    else:
+        outputs = mx.expand_dims(h, axis=1)
+    return h, outputs, [h]
