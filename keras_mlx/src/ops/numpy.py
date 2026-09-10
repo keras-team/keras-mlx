@@ -3,7 +3,6 @@ import math
 from copy import copy as builtin_copy
 
 import mlx.core as mx
-import numpy as np
 
 from keras.src.backend import config
 from keras.src.backend import result_type
@@ -156,14 +155,21 @@ def max(x, axis=None, keepdims=False, initial=None):
     return result.astype(x.dtype)
 
 
+def _shape_tuple(shape):
+    # A dimension can arrive as a traced scalar, mx shapes take plain ints.
+    if isinstance(shape, int):
+        return (shape,)
+    return tuple(int(d) for d in shape)
+
+
 def ones(shape, dtype=None):
     dtype = to_mlx_dtype(dtype or config.floatx())
-    return mx.ones(shape, dtype=dtype)
+    return mx.ones(_shape_tuple(shape), dtype=dtype)
 
 
 def zeros(shape, dtype=None):
     dtype = to_mlx_dtype(dtype or config.floatx())
-    return mx.zeros(shape, dtype=dtype)
+    return mx.zeros(_shape_tuple(shape), dtype=dtype)
 
 
 def zeros_like(x, dtype=None):
@@ -728,7 +734,7 @@ def floor(x):
 def full(shape, fill_value, dtype=None):
     dtype = to_mlx_dtype(dtype)
     fill_value = convert_to_tensor(fill_value, dtype=dtype)
-    return mx.full(shape, fill_value)
+    return mx.full(_shape_tuple(shape), fill_value)
 
 
 def full_like(x, fill_value, dtype=None):
@@ -814,9 +820,14 @@ def linspace(
         dtype = dtypes.result_type(*dtypes_to_resolve)
     mlx_dtype = to_mlx_dtype(dtype)
 
+    # mx.linspace takes Python scalars and a plain int for num.
+    num = int(num)
     if start.ndim == 0 and stop.ndim == 0:
         result = mx.linspace(
-            start, stop, num=num if endpoint else num + 1, dtype=mlx_dtype
+            start.item(),
+            stop.item(),
+            num=num if endpoint else num + 1,
+            dtype=mlx_dtype,
         )
     else:
         start = start.astype(mlx_dtype)
@@ -1064,9 +1075,9 @@ def outer(x1, x2):
 
 
 def pad(x, pad_width, mode="constant", constant_values=None):
-    if isinstance(pad_width, mx.array):
-        pad_width = pad_width.tolist()
     x = convert_to_tensor(x)
+    # A pad width can arrive as a traced scalar, mx.pad takes plain ints.
+    pad_width = [(int(before), int(after)) for before, after in pad_width]
 
     if constant_values is not None:
         if mode != "constant":
@@ -1080,26 +1091,8 @@ def pad(x, pad_width, mode="constant", constant_values=None):
 
     if mode == "constant":
         return mx.pad(x, pad_width, constant_values=constant_values)
-
-    if mode in ["symmetric", "reflect"]:
-        result = x
-        for axis, (pad_before, pad_after) in enumerate(pad_width):
-            if pad_before == 0 and pad_after == 0:
-                continue
-
-            # Pad an index array to reuse numpy's reflection semantics, which
-            # also cover reflecting repeatedly when the padding is wider than
-            # the axis. Shapes and pad_width are static, so the gather indices
-            # stay a compile time constant.
-            indices = np.pad(
-                np.arange(x.shape[axis], dtype="int32"),
-                (pad_before, pad_after),
-                mode=mode,
-            )
-            result = mx.take(result, mx.array(indices), axis=axis)
-
-        return result
-
+    if mode in ("edge", "reflect", "symmetric"):
+        return mx.pad(x, pad_width, mode=mode)
     raise ValueError(f"Unsupported padding mode: {mode}")
 
 
@@ -1261,10 +1254,13 @@ def reciprocal(x):
 
 def repeat(x, repeats, axis=None):
     x = convert_to_tensor(x)
+    if isinstance(repeats, int):
+        return mx.repeat(x, repeats, axis=axis)
     repeats = convert_to_tensor(repeats)
 
+    # mx.repeat takes a plain int, a traced scalar has to be read out.
     if repeats.size == 1:
-        return mx.repeat(x, repeats, axis=axis)
+        return mx.repeat(x, int(repeats.item()), axis=axis)
 
     if axis is None:
         x = mx.reshape(x, (-1,))
@@ -1287,7 +1283,7 @@ def reshape(x, newshape):
     if not isinstance(newshape, (list, tuple)):
         newshape = (newshape,)
     x = convert_to_tensor(x)
-    return mx.reshape(x, newshape)
+    return mx.reshape(x, tuple(int(d) for d in newshape))
 
 
 def roll(x, shift, axis=None):
@@ -1338,6 +1334,8 @@ def sort(x, axis=-1):
 
 def split(x, indices_or_sections, axis=0):
     x = convert_to_tensor(x)
+    if not isinstance(indices_or_sections, int):
+        indices_or_sections = [int(i) for i in indices_or_sections]
     return mx.split(x, indices_or_sections, axis=axis)
 
 
@@ -2027,7 +2025,7 @@ def array_split(x, indices_or_sections, axis=0):
             pos += each + (1 if i < rem else 0)
             split_points.append(pos)
         return mx.split(x, split_points, axis=axis)
-    return mx.split(x, indices_or_sections, axis=axis)
+    return split(x, indices_or_sections, axis=axis)
 
 
 def cbrt(x):
@@ -2080,8 +2078,7 @@ def deg2rad(x):
 
 
 def dsplit(x, indices_or_sections):
-    x = convert_to_tensor(x)
-    return mx.split(x, indices_or_sections, axis=2)
+    return split(x, indices_or_sections, axis=2)
 
 
 def _atleast_3d(x):
@@ -2269,7 +2266,7 @@ def heaviside(x1, x2):
 def hsplit(x, indices_or_sections):
     x = convert_to_tensor(x)
     axis = 0 if x.ndim == 1 else 1
-    return mx.split(x, indices_or_sections, axis=axis)
+    return split(x, indices_or_sections, axis=axis)
 
 
 def hypot(x1, x2):
@@ -2802,5 +2799,4 @@ def view(x, dtype=None):
 
 
 def vsplit(x, indices_or_sections):
-    x = convert_to_tensor(x)
-    return mx.split(x, indices_or_sections, axis=0)
+    return split(x, indices_or_sections, axis=0)
