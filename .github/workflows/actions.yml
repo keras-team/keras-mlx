@@ -29,10 +29,6 @@ jobs:
 
     env:
       KERAS_HOME: ../keras-mlx/.github/workflows/config
-      # mlx JIT-compiles CPU kernels via g++, and as of 0.31.2 its generated
-      # code redeclares the _Float128/_Float64 builtins, which gcc 13+ rejects.
-      # Disable the JIT until the wheel ships compatible codegen.
-      MLX_DISABLE_COMPILE: 1
 
     steps:
       - name: Install binary dependencies
@@ -90,8 +86,6 @@ jobs:
 
     env:
       KERAS_HOME: ../keras-mlx/.github/workflows/config
-      # See the linux job.
-      MLX_DISABLE_COMPILE: 1
 
     steps:
       - name: Set up Python
