@@ -63,6 +63,8 @@ jobs:
         run: |
           pip install -r keras/requirements-common.txt
           pip install -r keras-mlx/requirements.txt
+          # The numerical integration test compares against tf_keras.
+          pip install --no-deps tf_keras
 
       - name: Install keras-mlx
         working-directory: ./keras-mlx
@@ -79,13 +81,13 @@ jobs:
         # tests by file, which is how keras itself runs them.
         run: pytest keras -n auto --dist loadfile --ignore keras/src/applications --ignore keras/src/wrappers
 
-      - name: Run the integration tests
+      - name: Run the keras numerical integration test
         working-directory: ./keras
         env:
           # tensorflow pulls a keras from PyPI that has no mlx backend, so
           # point at the checkout explicitly.
           PYTHONPATH: ${{ github.workspace }}/keras
-        run: pytest ../keras-mlx/integration_test.py
+        run: python integration_tests/numerical_test.py
 
   run_macos_tests:
     # macos-latest is Apple silicon, so this is the only leg that runs Metal.
@@ -123,6 +125,8 @@ jobs:
         run: |
           pip install -r keras/requirements-common.txt
           pip install -r keras-mlx/requirements.txt
+          # The numerical integration test compares against tf_keras.
+          pip install --no-deps tf_keras
 
       - name: Install keras-mlx
         working-directory: ./keras-mlx
@@ -136,13 +140,13 @@ jobs:
         working-directory: ./keras
         run: pytest keras --ignore keras/src/applications --ignore keras/src/wrappers
 
-      - name: Run the integration tests
+      - name: Run the keras numerical integration test
         working-directory: ./keras
         env:
           # tensorflow pulls a keras from PyPI that has no mlx backend, so
           # point at the checkout explicitly.
           PYTHONPATH: ${{ github.workspace }}/keras
-        run: pytest ../keras-mlx/integration_test.py
+        run: python integration_tests/numerical_test.py
 
   format:
     name: Check the code format
