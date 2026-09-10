@@ -81,13 +81,18 @@ jobs:
         # tests by file, which is how keras itself runs them.
         run: pytest keras -n auto --dist loadfile --ignore keras/src/applications --ignore keras/src/wrappers
 
-      - name: Run the keras numerical integration test
+      - name: Run the keras integration tests
         working-directory: ./keras
         env:
-          # tensorflow pulls a keras from PyPI that has no mlx backend, so
-          # point at the checkout explicitly.
-          PYTHONPATH: ${{ github.workspace }}/keras
-        run: python integration_tests/numerical_test.py
+          # The import test installs the backend into a fresh venv from this
+          # requirement. mlx needs the cpu extra for its native library.
+          KERAS_BACKEND_PACKAGE: mlx[cpu]<0.32 ${{ github.workspace }}/keras-mlx
+        # tensorflow pulls a keras from PyPI that has no mlx backend, so the
+        # checkout has to come first on the path. The import test gets that
+        # from `python -m`, since a PYTHONPATH would leak into its fresh venv.
+        run: |
+          python -m pytest integration_tests/import_test.py
+          PYTHONPATH=${{ github.workspace }}/keras python integration_tests/numerical_test.py
 
   run_macos_tests:
     # macos-latest is Apple silicon, so this is the only leg that runs Metal.
@@ -140,13 +145,18 @@ jobs:
         working-directory: ./keras
         run: pytest keras --ignore keras/src/applications --ignore keras/src/wrappers
 
-      - name: Run the keras numerical integration test
+      - name: Run the keras integration tests
         working-directory: ./keras
         env:
-          # tensorflow pulls a keras from PyPI that has no mlx backend, so
-          # point at the checkout explicitly.
-          PYTHONPATH: ${{ github.workspace }}/keras
-        run: python integration_tests/numerical_test.py
+          # The import test installs the backend into a fresh venv from this
+          # requirement. mlx needs the cpu extra for its native library.
+          KERAS_BACKEND_PACKAGE: mlx[cpu]<0.32 ${{ github.workspace }}/keras-mlx
+        # tensorflow pulls a keras from PyPI that has no mlx backend, so the
+        # checkout has to come first on the path. The import test gets that
+        # from `python -m`, since a PYTHONPATH would leak into its fresh venv.
+        run: |
+          python -m pytest integration_tests/import_test.py
+          PYTHONPATH=${{ github.workspace }}/keras python integration_tests/numerical_test.py
 
   format:
     name: Check the code format
