@@ -102,6 +102,11 @@ keras/src/trainers/trainer_test.py::TestTrainer::test_callbacks_can_update_state
 keras/src/trainers/trainer_test.py::TestTrainer::test_evaluate_with_custom_test_step_dict
 keras/src/trainers/trainer_test.py::TestTrainer::test_evaluate_with_custom_test_step_flat
 keras/src/trainers/trainer_test.py::TestTrainer::test_fit_with_custom_train_step
+# mlx cannot evaluate an array on a thread other than the one that built
+# it, ml-explore/mlx#3529, and these build backend tensors on worker threads.
+keras/src/trainers/trainer_test.py::TestTrainer::test_fit_with_data_adapter_py_dataset_multithreading
+keras/src/trainers/trainer_test.py::TestTrainer::test_fit_with_data_adapter_py_dataset_multithreading_cw
+keras/src/trainers/trainer_test.py::TestTrainer::test_fit_with_data_adapter_py_dataset_multithreading_infinite
 keras/src/trainers/trainer_test.py::TestTrainer::test_fit_with_val_split_eager
 keras/src/trainers/trainer_test.py::TestTrainer::test_fit_with_val_split_graph_fn
 keras/src/trainers/trainer_test.py::TestTrainer::test_fit_with_val_split_jit
@@ -110,3 +115,5 @@ keras/src/trainers/trainer_test.py::TestTrainer::test_fit_with_val_split_steps_p
 keras/src/trainers/trainer_test.py::TestTrainer::test_fit_with_val_split_steps_per_epoch_jit
 keras/src/trainers/trainer_test.py::TestTrainer::test_retracing
 keras/src/trainers/trainer_test.py::TestTrainer::test_retracing_predict
+keras/src/utils/image_dataset_utils_test.py::ImageDatasetFromDirectoryTest::test_image_dataset_from_directory_shuffle_grain
+keras/src/utils/image_dataset_utils_test.py::ImageDatasetFromDirectoryTest::test_image_dataset_from_directory_shuffle_with_split_grain
