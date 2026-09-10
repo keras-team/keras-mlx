@@ -20,6 +20,9 @@ keras/src/layers/core/einsum_dense_test.py::EinsumDenseTest::test_quantize_float
 keras/src/layers/core/einsum_dense_test.py::EinsumDenseTest::test_quantize_float8_fitting
 keras/src/layers/core/einsum_dense_test.py::EinsumDenseTest::test_quantize_float8_inference
 keras/src/layers/layer_test.py::LayerTest::test_quantized_layer_with_remat
+# Evaluates a data dependent shape under compile. keras#23568 removed that
+# branch on master, drop this once the checkout has it.
+keras/src/layers/preprocessing/image_preprocessing/equalization_test.py::EqualizationTest::test_layer
 keras/src/layers/preprocessing/image_preprocessing/random_crop_test.py::RandomCropTest::test_dict_input
 keras/src/layers/preprocessing/image_preprocessing/random_crop_test.py::RandomCropTest::test_random_crop
 keras/src/models/functional_test.py::FunctionalTest::test_required_none_raises_in_fit
@@ -74,7 +77,5 @@ keras/src/trainers/trainer_test.py::TestTrainer::test_fit_with_custom_train_step
 keras/src/trainers/trainer_test.py::TestTrainer::test_fit_with_data_adapter_py_dataset_multithreading
 keras/src/trainers/trainer_test.py::TestTrainer::test_fit_with_data_adapter_py_dataset_multithreading_cw
 keras/src/trainers/trainer_test.py::TestTrainer::test_fit_with_data_adapter_py_dataset_multithreading_infinite
-keras/src/trainers/trainer_test.py::TestTrainer::test_retracing
-keras/src/trainers/trainer_test.py::TestTrainer::test_retracing_predict
 keras/src/utils/image_dataset_utils_test.py::ImageDatasetFromDirectoryTest::test_image_dataset_from_directory_shuffle_grain
 keras/src/utils/image_dataset_utils_test.py::ImageDatasetFromDirectoryTest::test_image_dataset_from_directory_shuffle_with_split_grain
