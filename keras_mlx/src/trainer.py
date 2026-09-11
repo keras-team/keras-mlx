@@ -940,4 +940,4 @@ class MLXEpochIterator(EpochIterator):
         return begin_step, end_step, buffer
 
     def _get_iterator(self):
-        return self.data_adapter.get_numpy_iterator()
+        return self.data_adapter.get_native_iterator()
