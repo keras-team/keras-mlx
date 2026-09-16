@@ -77,7 +77,7 @@ jobs:
         # Splitting across workers keeps each process small and means a worker
         # that dies no longer takes the whole run with it. loadfile groups the
         # tests by file, which is how keras itself runs them.
-        run: pytest keras -n auto --dist loadfile --ignore keras/src/applications --ignore keras/src/wrappers
+        run: pytest keras -n auto --dist loadfile --ignore keras/src/applications
 
       # TODO integration tests
 
@@ -128,7 +128,7 @@ jobs:
 
       - name: Run Tests
         working-directory: ./keras
-        run: pytest keras --ignore keras/src/applications --ignore keras/src/wrappers
+        run: pytest keras --ignore keras/src/applications
 
       # TODO integration tests
 
