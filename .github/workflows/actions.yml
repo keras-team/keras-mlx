@@ -77,7 +77,14 @@ jobs:
         # Splitting across workers keeps each process small and means a worker
         # that dies no longer takes the whole run with it. loadfile groups the
         # tests by file, which is how keras itself runs them.
-        run: pytest keras -n auto --dist loadfile --ignore keras/src/applications
+        run: pytest keras -n auto --dist loadfile --ignore keras/src/applications --ignore keras/src/wrappers
+
+      - name: Run the sklearn wrapper tests
+        working-directory: ./keras
+        # The sklearn checks put a function address in their test ids, so
+        # xdist workers collect different ids and refuse to run. One process,
+        # like the keras workflow.
+        run: pytest keras/src/wrappers
 
       # TODO integration tests
 
