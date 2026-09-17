@@ -1076,6 +1076,8 @@ def pad(x, pad_width, mode="constant", constant_values=None):
     if isinstance(pad_width, mx.array):
         pad_width = pad_width.tolist()
     x = convert_to_tensor(x)
+    if len(pad_width) == 1:
+        pad_width = [pad_width[0]] * x.ndim
 
     if constant_values is not None:
         if mode != "constant":
