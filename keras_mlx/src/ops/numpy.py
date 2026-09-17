@@ -512,6 +512,15 @@ def copy(x):
     return builtin_copy(x)
 
 
+def copysign(x1, x2):
+    x1 = convert_to_tensor(x1)
+    x2 = convert_to_tensor(x2)
+    dtype = _mlx_result_dtype(dtypes.result_type(x1.dtype, x2.dtype, float))
+    x1 = x1.astype(dtype)
+    x2 = x2.astype(dtype)
+    return mx.where(signbit(x2), -mx.abs(x1), mx.abs(x1))
+
+
 def cos(x):
     x = convert_to_tensor(x)
     return mx.cos(x)
@@ -1067,6 +1076,8 @@ def pad(x, pad_width, mode="constant", constant_values=None):
     if isinstance(pad_width, mx.array):
         pad_width = pad_width.tolist()
     x = convert_to_tensor(x)
+    if len(pad_width) == 1:
+        pad_width = [pad_width[0]] * x.ndim
 
     if constant_values is not None:
         if mode != "constant":
@@ -1523,6 +1534,13 @@ def true_divide(x1, x2):
 def power(x1, x2):
     x1, x2 = _promote(x1, x2)
     return mx.power(x1, x2)
+
+
+def float_power(x1, x2):
+    x1 = convert_to_tensor(x1)
+    x2 = convert_to_tensor(x2)
+    dtype = _mlx_result_dtype(dtypes.result_type(x1.dtype, x2.dtype, float))
+    return mx.power(x1.astype(dtype), x2.astype(dtype))
 
 
 def negative(x):
@@ -2804,3 +2822,27 @@ def view(x, dtype=None):
 def vsplit(x, indices_or_sections):
     x = convert_to_tensor(x)
     return mx.split(x, indices_or_sections, axis=0)
+
+
+def cov(x):
+    x = convert_to_tensor(x)
+    if x.ndim > 2:
+        raise ValueError(
+            "Input tensor must have at most 2 dimensions. "
+            f"Received: x.shape={x.shape}"
+        )
+    dtype = standardize_dtype(x.dtype)
+    dtype = "float64" if dtype == "int64" else dtypes.result_type(dtype, float)
+    result_dtype = _mlx_result_dtype(dtype)
+    if x.ndim == 0:
+        return _nan_scalar(result_dtype)
+    if x.ndim == 1:
+        x = mx.expand_dims(x, 0)
+    x = x.astype(mx.float32)
+    x_centered = x - mx.mean(x, axis=1, keepdims=True)
+    result = mx.matmul(x_centered, mx.transpose(x_centered)) / builtins.max(
+        x.shape[1] - 1, 0
+    )
+    if result.shape[0] == 1:
+        result = mx.reshape(result, ())
+    return result.astype(result_dtype)
