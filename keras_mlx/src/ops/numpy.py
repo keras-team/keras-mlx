@@ -2840,7 +2840,7 @@ def cov(x):
         x = mx.expand_dims(x, 0)
     x = x.astype(mx.float32)
     x_centered = x - mx.mean(x, axis=1, keepdims=True)
-    result = mx.matmul(x_centered, mx.transpose(x_centered)) / max(
+    result = mx.matmul(x_centered, mx.transpose(x_centered)) / builtins.max(
         x.shape[1] - 1, 0
     )
     if result.shape[0] == 1:
