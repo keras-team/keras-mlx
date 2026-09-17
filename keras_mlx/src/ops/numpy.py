@@ -512,6 +512,15 @@ def copy(x):
     return builtin_copy(x)
 
 
+def copysign(x1, x2):
+    x1 = convert_to_tensor(x1)
+    x2 = convert_to_tensor(x2)
+    dtype = _mlx_result_dtype(dtypes.result_type(x1.dtype, x2.dtype, float))
+    x1 = x1.astype(dtype)
+    x2 = x2.astype(dtype)
+    return mx.where(signbit(x2), -mx.abs(x1), mx.abs(x1))
+
+
 def cos(x):
     x = convert_to_tensor(x)
     return mx.cos(x)
