@@ -2820,3 +2820,28 @@ def view(x, dtype=None):
 def vsplit(x, indices_or_sections):
     x = convert_to_tensor(x)
     return mx.split(x, indices_or_sections, axis=0)
+
+
+def cov(x):
+    x = convert_to_tensor(x)
+    if x.ndim > 2:
+        raise ValueError(
+            "Input tensor must have at most 2 dimensions. "
+            f"Received: x.shape={x.shape}"
+        )
+    dtype = standardize_dtype(x.dtype)
+    if dtype in ("int64", "float64"):
+        dtype = "float64"
+    elif dtype not in ("float16", "bfloat16"):
+        dtype = config.floatx()
+    result_dtype = _mlx_result_dtype(dtype)
+    if x.ndim == 0:
+        return _nan_scalar(result_dtype)
+    if x.ndim == 1:
+        x = mx.expand_dims(x, 0)
+    x = x.astype(mx.float32)
+    x_centered = x - mx.mean(x, axis=1, keepdims=True)
+    result = mx.matmul(x_centered, mx.transpose(x_centered)) / (x.shape[1] - 1)
+    if result.shape[0] == 1:
+        result = mx.reshape(result, ())
+    return result.astype(result_dtype)
