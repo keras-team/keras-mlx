@@ -1525,6 +1525,13 @@ def power(x1, x2):
     return mx.power(x1, x2)
 
 
+def float_power(x1, x2):
+    x1 = convert_to_tensor(x1)
+    x2 = convert_to_tensor(x2)
+    dtype = _mlx_result_dtype(dtypes.result_type(x1.dtype, x2.dtype, float))
+    return mx.power(x1.astype(dtype), x2.astype(dtype))
+
+
 def negative(x):
     x = convert_to_tensor(x)
     return mx.negative(x)
