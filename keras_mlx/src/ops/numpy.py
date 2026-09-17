@@ -2832,10 +2832,7 @@ def cov(x):
             f"Received: x.shape={x.shape}"
         )
     dtype = standardize_dtype(x.dtype)
-    if dtype in ("int64", "float64"):
-        dtype = "float64"
-    elif dtype not in ("float16", "bfloat16"):
-        dtype = config.floatx()
+    dtype = "float64" if dtype == "int64" else dtypes.result_type(dtype, float)
     result_dtype = _mlx_result_dtype(dtype)
     if x.ndim == 0:
         return _nan_scalar(result_dtype)
@@ -2843,7 +2840,9 @@ def cov(x):
         x = mx.expand_dims(x, 0)
     x = x.astype(mx.float32)
     x_centered = x - mx.mean(x, axis=1, keepdims=True)
-    result = mx.matmul(x_centered, mx.transpose(x_centered)) / (x.shape[1] - 1)
+    result = mx.matmul(x_centered, mx.transpose(x_centered)) / max(
+        x.shape[1] - 1, 0
+    )
     if result.shape[0] == 1:
         result = mx.reshape(result, ())
     return result.astype(result_dtype)
