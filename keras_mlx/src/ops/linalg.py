@@ -61,7 +61,8 @@ def eigh(a):
 def lu_factor(a):
     with mx.stream(mx.cpu):
         # This op is not yet supported on the GPU.
-        return mx.linalg.lu_factor(a)
+        lu, pivots = mx.linalg.lu_factor(a)
+    return lu, pivots.astype(mx.int32)
 
 
 def solve(a, b):
