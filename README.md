@@ -33,8 +33,7 @@ Running tests happens from the root of the `keras` repository.
 
 ```
 cd keras
-KERAS_BACKEND=mlx pytest keras --ignore=keras/src/applications \
-    --ignore=keras/src/wrappers
+KERAS_BACKEND=mlx pytest keras --ignore=keras/src/applications
 ```
 
 ## Formatting the code

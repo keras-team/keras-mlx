@@ -69,8 +69,7 @@ keras/src/trainers/trainer_test.py::TestTrainer::test_callbacks_can_update_state
 keras/src/trainers/trainer_test.py::TestTrainer::test_evaluate_with_custom_test_step_dict
 keras/src/trainers/trainer_test.py::TestTrainer::test_evaluate_with_custom_test_step_flat
 keras/src/trainers/trainer_test.py::TestTrainer::test_fit_with_custom_train_step
-# mlx cannot evaluate an array on a thread other than the one that built
-# it, ml-explore/mlx#3529, and these build backend tensors on worker threads.
+# These build backend tensors on worker threads, ml-explore/mlx#3529.
 keras/src/trainers/trainer_test.py::TestTrainer::test_fit_with_data_adapter_py_dataset_multithreading
 keras/src/trainers/trainer_test.py::TestTrainer::test_fit_with_data_adapter_py_dataset_multithreading_cw
 keras/src/trainers/trainer_test.py::TestTrainer::test_fit_with_data_adapter_py_dataset_multithreading_infinite
