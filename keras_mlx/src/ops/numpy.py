@@ -11,6 +11,7 @@ from keras.src.backend.common import standardize_dtype
 from keras.src.backend.common.backend_utils import canonicalize_axis
 from keras.src.backend.common.backend_utils import normalize_shift_and_axis
 from keras.src.backend.common.backend_utils import vectorize_impl
+from keras_mlx.src.ops.core import _join_shared_streams
 from keras_mlx.src.ops.core import cast
 from keras_mlx.src.ops.core import convert_to_tensor
 from keras_mlx.src.ops.core import convert_to_tensors
@@ -163,11 +164,13 @@ def _shape_tuple(shape):
 
 
 def ones(shape, dtype=None):
+    _join_shared_streams()
     dtype = to_mlx_dtype(dtype or config.floatx())
     return mx.ones(_shape_tuple(shape), dtype=dtype)
 
 
 def zeros(shape, dtype=None):
+    _join_shared_streams()
     dtype = to_mlx_dtype(dtype or config.floatx())
     return mx.zeros(_shape_tuple(shape), dtype=dtype)
 
@@ -214,6 +217,7 @@ def append(x1, x2, axis=None):
 
 
 def arange(start, stop=None, step=None, dtype=None):
+    _join_shared_streams()
     if dtype is None:
         dtypes_to_resolve = [getattr(start, "dtype", type(start))]
         if stop is not None:
@@ -667,6 +671,7 @@ def dot(x1, x2):
 
 
 def empty(shape, dtype=None):
+    _join_shared_streams()
     dtype = to_mlx_dtype(dtype or config.floatx())
     return mx.zeros(shape, dtype=dtype)
 
@@ -773,6 +778,7 @@ def hstack(xs):
 
 
 def identity(n, dtype=None):
+    _join_shared_streams()
     dtype = to_mlx_dtype(dtype or config.floatx())
     return mx.eye(n, dtype=dtype)
 
@@ -1426,6 +1432,7 @@ def trace(x, offset=0, axis1=0, axis2=1):
 
 
 def tri(N, M=None, k=0, dtype=None):
+    _join_shared_streams()
     dtype = to_mlx_dtype(dtype or config.floatx())
     M = N if M is None else M
     x = mx.ones((N, M), dtype=dtype)
@@ -1588,6 +1595,7 @@ def sum(x, axis=None, keepdims=False):
 
 
 def eye(N, M=None, k=0, dtype=None):
+    _join_shared_streams()
     # mlx silently converts a float-valued 0-d array to int, numpy raises.
     for arg in (N, M):
         arg_dtype = getattr(arg, "dtype", None)
