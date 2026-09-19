@@ -63,8 +63,8 @@ jobs:
         run: |
           pip install -r keras/requirements-common.txt
           pip install -r keras-mlx/requirements.txt
-          # The numerical integration test compares against tf_keras.
-          pip install --no-deps tf_keras
+          # tf_keras has to match the tensorflow minor, newer ones need protobuf 6.
+          pip install --no-deps "tf_keras==$(python -c 'import tensorflow as tf; print(tf.__version__.rsplit(".", 1)[0])').*"
 
       - name: Install keras-mlx
         working-directory: ./keras-mlx
@@ -91,13 +91,9 @@ jobs:
       - name: Run the keras integration tests
         working-directory: ./keras
         env:
-          # The import test installs the backend into a fresh venv from this
-          # requirement. The keras-mlx package pulls the right mlx wheel for
-          # the platform.
+          # The import test installs the backend from this requirement.
           KERAS_BACKEND_PACKAGES: ${{ github.workspace }}/keras-mlx
-        # tensorflow pulls a keras from PyPI that has no mlx backend, so the
-        # checkout has to come first on the path. The import test gets that
-        # from `python -m`, since a PYTHONPATH would leak into its fresh venv.
+        # The keras that tensorflow pulls from PyPI has no mlx backend.
         run: |
           python -m pytest integration_tests/import_test.py
           PYTHONPATH=. python integration_tests/numerical_test.py
@@ -138,8 +134,8 @@ jobs:
         run: |
           pip install -r keras/requirements-common.txt
           pip install -r keras-mlx/requirements.txt
-          # The numerical integration test compares against tf_keras.
-          pip install --no-deps tf_keras
+          # tf_keras has to match the tensorflow minor, newer ones need protobuf 6.
+          pip install --no-deps "tf_keras==$(python -c 'import tensorflow as tf; print(tf.__version__.rsplit(".", 1)[0])').*"
 
       - name: Install keras-mlx
         working-directory: ./keras-mlx
@@ -156,13 +152,9 @@ jobs:
       - name: Run the keras integration tests
         working-directory: ./keras
         env:
-          # The import test installs the backend into a fresh venv from this
-          # requirement. The keras-mlx package pulls the right mlx wheel for
-          # the platform.
+          # The import test installs the backend from this requirement.
           KERAS_BACKEND_PACKAGES: ${{ github.workspace }}/keras-mlx
-        # tensorflow pulls a keras from PyPI that has no mlx backend, so the
-        # checkout has to come first on the path. The import test gets that
-        # from `python -m`, since a PYTHONPATH would leak into its fresh venv.
+        # The keras that tensorflow pulls from PyPI has no mlx backend.
         run: |
           python -m pytest integration_tests/import_test.py
           PYTHONPATH=. python integration_tests/numerical_test.py
