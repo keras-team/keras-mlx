@@ -639,8 +639,7 @@ class custom_gradient:
 
         @call.vjp
         def call_vjp(primals, cotangent, output):
-            # mlx hands over a bare array for a single primal and a tuple for
-            # several, so normalise before handing them back to fun.
+            # mlx gives a bare array for one primal and a tuple for several.
             if not isinstance(primals, (tuple, list)):
                 primals = (primals,)
             _, grad_fn = fun(*primals, **kwargs)
@@ -665,6 +664,10 @@ def remat(f):
 
 
 def grad(f, argnums=0):
+    def scalar_f(*args, **kwargs):
+        # A gradient tape sums a non scalar output, so do the same here.
+        return mx.sum(convert_to_tensor(f(*args, **kwargs)))
+
     def grad_fn(*args, **kwargs):
         positions = standardize_argnums(argnums, len(args))
         args = list(args)
@@ -675,15 +678,6 @@ def grad(f, argnums=0):
         if not isinstance(argnums, int) and len(positions) == 1:
             grads = (grads,)
         return grads
-
-    def scalar_f(*args, **kwargs):
-        output = convert_to_tensor(f(*args, **kwargs))
-        if output.shape != ():
-            raise ValueError(
-                "The function passed to `grad` must return a scalar. "
-                f"Received output shape: {output.shape}"
-            )
-        return output
 
     return grad_fn
 
