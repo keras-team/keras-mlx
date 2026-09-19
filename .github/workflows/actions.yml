@@ -100,7 +100,7 @@ jobs:
         # from `python -m`, since a PYTHONPATH would leak into its fresh venv.
         run: |
           python -m pytest integration_tests/import_test.py
-          PYTHONPATH=${{ github.workspace }}/keras python integration_tests/numerical_test.py
+          PYTHONPATH=. python integration_tests/numerical_test.py
 
   run_macos_tests:
     # macos-latest is Apple silicon, so this is the only leg that runs Metal.
@@ -165,7 +165,7 @@ jobs:
         # from `python -m`, since a PYTHONPATH would leak into its fresh venv.
         run: |
           python -m pytest integration_tests/import_test.py
-          PYTHONPATH=${{ github.workspace }}/keras python integration_tests/numerical_test.py
+          PYTHONPATH=. python integration_tests/numerical_test.py
 
   format:
     name: Check the code format
