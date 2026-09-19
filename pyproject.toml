@@ -30,8 +30,8 @@ dependencies = [
     # The base mlx wheel only ships the Python frontend. macOS gets the
     # native library through mlx-metal automatically, Linux only through
     # the cpu extra.
-    "mlx<0.32; sys_platform == 'darwin'",
-    "mlx[cpu]<0.32; sys_platform == 'linux'",
+    "mlx>=0.32; sys_platform == 'darwin'",
+    "mlx[cpu]>=0.32; sys_platform == 'linux'",
 ]
 
 [project.urls]
