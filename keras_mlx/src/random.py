@@ -6,6 +6,7 @@ from keras.src.backend.config import floatx
 from keras.src.random.seed_generator import SeedGenerator  # noqa: F401
 from keras.src.random.seed_generator import draw_seed
 from keras.src.random.seed_generator import make_default_seed  # noqa: F401
+from keras_mlx.src.ops.core import _join_shared_streams
 from keras_mlx.src.ops.core import convert_to_tensor
 from keras_mlx.src.ops.core import to_mlx_dtype
 
@@ -16,6 +17,7 @@ GAMMA_ROUNDS = 24
 
 
 def mlx_draw_seed(seed):
+    _join_shared_streams()
     if isinstance(seed, mx.array):
         return seed
     else:

@@ -1,5 +1,6 @@
 import builtins
 import functools
+import threading
 import warnings
 
 import ml_dtypes
@@ -56,7 +57,25 @@ def _is_h5py_dataset(obj):
     )
 
 
+# Worker threads build arrays the training thread evaluates, mlx#3281.
+_shared_streams = None
+_shared_streams_lock = threading.Lock()
+
+
+def _join_shared_streams():
+    global _shared_streams
+    with _shared_streams_lock:
+        if _shared_streams is None:
+            _shared_streams = [mx.new_thread_unsafe_stream(mx.cpu)]
+            if mx.is_available(mx.gpu):
+                _shared_streams.append(mx.new_thread_unsafe_stream(mx.gpu))
+    if mx.default_stream(mx.cpu) != _shared_streams[0]:
+        for stream in _shared_streams:
+            mx.set_default_stream(stream)
+
+
 def convert_to_tensor(x, dtype=None, sparse=None, ragged=None):
+    _join_shared_streams()
     if sparse:
         raise ValueError("`sparse=True` is not supported with mlx backend")
     if ragged:
@@ -649,6 +668,8 @@ def remat(f):
 
 
 def device_scope(device_name):
+    # The context resolves the default stream when it is built.
+    _join_shared_streams()
     if isinstance(device_name, str):
         mlx_device = mx.cpu if "cpu" in device_name.lower() else mx.gpu
     elif not isinstance(device_name, mx.Device):
