@@ -1,5 +1,6 @@
 import builtins
 import functools
+import os
 import threading
 import warnings
 
@@ -60,6 +61,20 @@ def _is_h5py_dataset(obj):
 # Worker threads build arrays the training thread evaluates, mlx#3281.
 _shared_streams = None
 _shared_streams_lock = threading.Lock()
+
+
+def _reset_shared_streams():
+    # A forked child inherits the streams but not the threads that serve
+    # them, so its first evaluation on one would block forever. Drop them
+    # and let the child's first join build its own. The lock goes too: the
+    # fork can land while another thread holds it, keras forks its
+    # PyDataset pool from the enqueuer thread while training runs.
+    global _shared_streams, _shared_streams_lock
+    _shared_streams = None
+    _shared_streams_lock = threading.Lock()
+
+
+os.register_at_fork(after_in_child=_reset_shared_streams)
 
 
 def _join_shared_streams():
