@@ -305,34 +305,7 @@ def scatter_update(inputs, indices, updates, reduction=None):
     return inputs
 
 
-def slice(inputs, start_indices, shape):
-    inputs = convert_to_tensor(inputs)
-    if not isinstance(shape, (list, tuple)):
-        shape = convert_to_tensor(shape, dtype="int32").tolist()
-    else:
-        shape = [i if isinstance(i, int) else i.item() for i in shape]
-    if not isinstance(start_indices, (list, tuple)):
-        start_indices = convert_to_tensor(start_indices, dtype="int32").tolist()
-    else:
-        start_indices = [
-            i if isinstance(i, int) else i.item() for i in start_indices
-        ]
-    # A length of -1 means all remaining elements in that dimension.
-    shape = [
-        inputs.shape[i] - start_indices[i] if length == -1 else length
-        for i, length in enumerate(shape)
-    ]
-    slices = tuple(
-        builtins.slice(start_index, start_index + length)
-        for start_index, length in zip(start_indices, shape)
-    )
-    return inputs[slices]
-
-
-def slice_update(inputs, start_indices, updates):
-    inputs = convert_to_tensor(inputs)
-    updates = convert_to_tensor(updates, dtype=inputs.dtype)
-
+def _normalize_start_indices(start_indices, inputs_shape, slice_shape):
     if isinstance(start_indices, (list, tuple)):
         indices = [
             i
@@ -350,7 +323,68 @@ def slice_update(inputs, start_indices, updates):
 
     if start_indices.ndim == 0:
         start_indices = mx.reshape(start_indices, (1,))
+    # Like `jax.lax.dynamic_slice`, a negative start counts from the end and
+    # the slice is kept inside the input.
+    rank = start_indices.shape[0]
+    dims = mx.array(inputs_shape[:rank], dtype=mx.int32)
+    sizes = mx.array(slice_shape[:rank], dtype=mx.int32)
+    start_indices = mx.where(
+        start_indices < 0, start_indices + dims, start_indices
+    )
+    return mx.clip(start_indices, 0, dims - sizes)
 
+
+def slice(inputs, start_indices, shape):
+    inputs = convert_to_tensor(inputs)
+    if not isinstance(shape, (list, tuple)):
+        shape = convert_to_tensor(shape, dtype="int32").tolist()
+    else:
+        shape = [i if isinstance(i, int) else i.item() for i in shape]
+    # A length of -1 needs the start index on the host to size the output.
+    if -1 not in shape and (
+        isinstance(start_indices, mx.array)
+        or any(isinstance(i, mx.array) for i in start_indices)
+    ):
+        # Reading a start index on the host would wait for the device.
+        start_indices = _normalize_start_indices(
+            start_indices, inputs.shape, shape
+        )
+        axes = tuple(range(start_indices.shape[0]))
+        return mx.slice(inputs, start_indices, axes, shape)
+    if not isinstance(start_indices, (list, tuple)):
+        start_indices = convert_to_tensor(start_indices, dtype="int32").tolist()
+    else:
+        start_indices = [
+            i if isinstance(i, int) else i.item() for i in start_indices
+        ]
+    # Same wrapping and clamping as the device path.
+    start_indices = [
+        start + dim if start < 0 else start
+        for start, dim in zip(start_indices, inputs.shape)
+    ]
+    # A length of -1 means all remaining elements in that dimension.
+    shape = [
+        inputs.shape[i] - start_indices[i] if length == -1 else length
+        for i, length in enumerate(shape)
+    ]
+    start_indices = [
+        max(0, min(start, dim - length))
+        for start, dim, length in zip(start_indices, inputs.shape, shape)
+    ]
+    slices = tuple(
+        builtins.slice(start_index, start_index + length)
+        for start_index, length in zip(start_indices, shape)
+    )
+    return inputs[slices]
+
+
+def slice_update(inputs, start_indices, updates):
+    inputs = convert_to_tensor(inputs)
+    updates = convert_to_tensor(updates, dtype=inputs.dtype)
+
+    start_indices = _normalize_start_indices(
+        start_indices, inputs.shape, updates.shape
+    )
     axes = tuple(range(start_indices.shape[0]))
     return mx.slice_update(
         inputs, updates, start_indices=start_indices, axes=axes
