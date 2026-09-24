@@ -1,6 +1,5 @@
 import builtins
 import functools
-import warnings
 
 import ml_dtypes
 import mlx.core as mx
@@ -10,6 +9,7 @@ from keras.src import tree
 from keras.src.backend.common import KerasVariable as Variable
 from keras.src.backend.common import standardize_dtype
 from keras.src.backend.common.backend_utils import slice_along_axis
+from keras.src.backend.common.backend_utils import standardize_argnums
 from keras.src.backend.common.keras_tensor import KerasTensor
 from keras.src.backend.common.stateless_scope import StatelessScope
 from keras.src.backend.common.symbolic_scope import SymbolicScope
@@ -658,16 +658,31 @@ class custom_gradient:
     """
 
     def __init__(self, f):
-        warnings.warn(
-            "`custom_gradient` for the mlx backend acts as a pass-through to "
-            "support the forward pass. No gradient computation or modification "
-            "takes place."
-        )
         self.fun = f
 
     def __call__(self, *args, **kwargs):
-        outputs, _ = self.fun(*args, **kwargs)
-        return outputs
+        fun = self.fun
+        args = tree.map_structure(
+            lambda x: x.value if isinstance(x, Variable) else x, args
+        )
+
+        @mx.custom_function
+        def call(*primals):
+            outputs, _ = fun(*primals, **kwargs)
+            return outputs
+
+        @call.vjp
+        def call_vjp(primals, cotangent, output):
+            # mlx gives a bare array for one primal and a tuple for several.
+            if not isinstance(primals, (tuple, list)):
+                primals = (primals,)
+            _, grad_fn = fun(*primals, **kwargs)
+            grads = grad_fn(cotangent)
+            if not isinstance(grads, (tuple, list)):
+                grads = (grads,)
+            return tuple(grads)
+
+        return call(*args)
 
 
 def remat(f):
@@ -680,6 +695,25 @@ def remat(f):
         recomputes f on the backwards pass of a gradient call.
     """
     return mx.checkpoint(f)
+
+
+def grad(f, argnums=0):
+    def scalar_f(*args, **kwargs):
+        # A gradient tape sums a non scalar output, so do the same here.
+        return mx.sum(convert_to_tensor(f(*args, **kwargs)))
+
+    def grad_fn(*args, **kwargs):
+        positions = standardize_argnums(argnums, len(args))
+        args = list(args)
+        for i in positions:
+            args[i] = tree.map_structure(convert_to_tensor, args[i])
+        grads = mx.grad(scalar_f, argnums=positions)(*args, **kwargs)
+        # mlx unwraps a single position, jax only does that for an int.
+        if not isinstance(argnums, int) and len(positions) == 1:
+            grads = (grads,)
+        return grads
+
+    return grad_fn
 
 
 def device_scope(device_name):
