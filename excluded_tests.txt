@@ -42,7 +42,6 @@ keras/src/ops/numpy_test.py::NumpyOneInputOpsDynamicShapeTest::test_argmax_negat
 keras/src/ops/numpy_test.py::NumpyOneInputOpsDynamicShapeTest::test_argmin_negative_zero
 keras/src/quantizers/gptq_test.py::TestModelQuantization::test_quantize_gptq_combinations_string_dataset_group_wise
 keras/src/quantizers/gptq_test.py::TestModelQuantization::test_quantize_gptq_combinations_string_dataset_group_wise_act_order
-keras/src/quantizers/gptq_test.py::TestModelQuantization::test_quantize_gptq_combinations_string_dataset_group_wise_symmetric_8bit
 keras/src/quantizers/quantizers_test.py::QuantizersTest::test_quantize_and_dequantize
 keras/src/saving/saving_api_test.py::LoadModelTests::test_basic_load_float64
 keras/src/saving/saving_api_test.py::LoadWeightsTests::test_load_weights_h5_float16_float64
