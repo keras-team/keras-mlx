@@ -29,7 +29,7 @@ class Trainer(BaseTrainer):
     def _data_to_mlx(self, data):
         return tree.map_structure(convert_to_tensor, data, none_is_leaf=False)
 
-    def mlx_state_sync(self):
+    def state_sync(self):
         if not getattr(self, "_mlx_state", None) or self._mlx_state_synced:
             return
 
@@ -96,7 +96,7 @@ class Trainer(BaseTrainer):
         reclaimed by MLX.
 
         When finished updating the model variables by training, then we can
-        reattach them to the model with `mlx_state_sync()`.
+        reattach them to the model with `state_sync()`.
         """
         if trainable_variables:
             for v in self.trainable_variables:
@@ -548,7 +548,7 @@ class Trainer(BaseTrainer):
                             break
 
                 # Reattach state to model variables.
-                self.mlx_state_sync()
+                self.state_sync()
 
                 # Override with model metrics instead of last step logs
                 epoch_logs = pythonify_logs(
@@ -593,7 +593,7 @@ class Trainer(BaseTrainer):
             training_finished = True
         finally:
             # Reattach state and finalize even if an epoch raises.
-            self.mlx_state_sync()
+            self.state_sync()
             if (
                 isinstance(self.optimizer, optimizers_module.Optimizer)
                 and epochs > 0
@@ -693,7 +693,7 @@ class Trainer(BaseTrainer):
                 if self.stop_evaluating:
                     break
 
-        self.mlx_state_sync()
+        self.state_sync()
         logs = pythonify_logs(self._get_metrics_result_or_logs(logs))
         callbacks.on_test_end(logs)
         self._mlx_state = None
@@ -786,7 +786,7 @@ class Trainer(BaseTrainer):
                 )
                 if self.stop_predicting:
                     break
-        self.mlx_state_sync()
+        self.state_sync()
         callbacks.on_predict_end()
         self._mlx_state = None
         outputs = tree.map_structure(
@@ -850,7 +850,7 @@ class Trainer(BaseTrainer):
             "optimizer_variables": optimizer_variables,
             "metrics_variables": metrics_variables,
         }
-        self.mlx_state_sync()
+        self.state_sync()
 
         logs = pythonify_logs(logs)
         if return_dict:
@@ -895,7 +895,7 @@ class Trainer(BaseTrainer):
             "non_trainable_variables": non_trainable_variables,
             "metrics_variables": metrics_variables,
         }
-        self.mlx_state_sync()
+        self.state_sync()
 
         logs = pythonify_logs(logs)
         if return_dict:
@@ -927,7 +927,7 @@ class Trainer(BaseTrainer):
         self._mlx_state = {
             "non_trainable_variables": non_trainable_variables,
         }
-        self.mlx_state_sync()
+        self.state_sync()
         # TODO: This copies but we could avoid it
         batch_outputs = tree.map_structure(convert_to_numpy, batch_outputs)
         return batch_outputs

@@ -4,12 +4,6 @@ keras/src/backend/common/remat_test.py::RematTest::test_remat_with_kwargs
 keras/src/backend/common/variables_test.py::VariablePropertiesTest::test_standardize_dtype_complex128
 keras/src/backend/common/variables_test.py::VariablePropertiesTest::test_standardize_dtype_float8_e4m3fn
 keras/src/backend/common/variables_test.py::VariablePropertiesTest::test_standardize_dtype_float8_e5m2
-keras/src/callbacks/backup_and_restore_test.py::BackupAndRestoreCallbackTest::test_best_case_step
-keras/src/callbacks/callback_test.py::CallbackTest::test_model_state_is_current_on_epoch_end
-keras/src/callbacks/model_checkpoint_test.py::ModelCheckpointTest::test_model_checkpoint_options
-keras/src/callbacks/orbax_checkpoint_test.py::OrbaxCheckpointTest::test_checkpoint_saving_basic0
-keras/src/callbacks/orbax_checkpoint_test.py::OrbaxCheckpointTest::test_training_resumption_1
-keras/src/callbacks/orbax_checkpoint_test.py::OrbaxCheckpointTest::test_training_resumption_2
 keras/src/callbacks/tensorboard_test.py::TestTensorBoardV2::test_TensorBoard_non_blocking
 keras/src/layers/core/dense_test.py::DenseTest::test_quantize_dtype_argument_float8
 keras/src/layers/core/dense_test.py::DenseTest::test_quantize_float8
@@ -65,7 +59,6 @@ keras/src/saving/saving_api_test.py::LoadWeightsTests::test_load_weights_weights
 keras/src/saving/saving_api_test.py::LoadWeightsTests::test_load_weights_weights.h5_float64_float16
 keras/src/saving/saving_api_test.py::LoadWeightsTests::test_load_weights_weights.h5_float64_float32
 keras/src/saving/saving_api_test.py::LoadWeightsTests::test_load_weights_weights.h5_float64_float64
-keras/src/trainers/trainer_test.py::TestTrainer::test_callbacks_can_update_state_at_batch_boundary
 keras/src/trainers/trainer_test.py::TestTrainer::test_evaluate_with_custom_test_step_dict
 keras/src/trainers/trainer_test.py::TestTrainer::test_evaluate_with_custom_test_step_flat
 keras/src/trainers/trainer_test.py::TestTrainer::test_fit_with_custom_train_step
