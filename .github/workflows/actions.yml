@@ -98,6 +98,13 @@ jobs:
           python -m pytest integration_tests/import_test.py
           PYTHONPATH=. python integration_tests/numerical_test.py
 
+      - name: Run the plugin tests
+        working-directory: ./keras-mlx
+        # The plugin tests import keras from the checkout, not from PyPI.
+        env:
+          PYTHONPATH: ../keras
+        run: pytest keras_mlx
+
   run_macos_tests:
     # macos-latest is Apple silicon, so this is the only leg that runs Metal.
     # It has no container, GitHub hosted macOS runners cannot run one.
@@ -158,6 +165,13 @@ jobs:
         run: |
           python -m pytest integration_tests/import_test.py
           PYTHONPATH=. python integration_tests/numerical_test.py
+
+      - name: Run the plugin tests
+        working-directory: ./keras-mlx
+        # See the linux job.
+        env:
+          PYTHONPATH: ../keras
+        run: pytest keras_mlx
 
   format:
     name: Check the code format
