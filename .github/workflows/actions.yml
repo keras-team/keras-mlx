@@ -62,13 +62,17 @@ jobs:
           # tf_keras has to match the tensorflow minor, newer ones need protobuf 6.
           pip install --no-deps "tf_keras==$(python -c 'import tensorflow as tf; print(tf.__version__.rsplit(".", 1)[0])').*"
 
-      - name: Install keras-mlx
+      - name: Install keras and keras-mlx
         working-directory: ./keras-mlx
-        run: pip install -e .
+        # The PyPI keras that tensorflow and keras-mlx pull in has no mlx
+        # backend, swap in the checkout.
+        run: |
+          pip install -e .
+          pip install --no-deps -e ../keras
 
       - name: Verify installation
-        working-directory: ./keras
-        run: python -c "import keras; assert keras.backend.backend() == 'mlx'; import keras_mlx; print(keras_mlx.__version__)"
+        working-directory: ./keras-mlx
+        run: python -c "import os, keras; assert os.path.realpath(keras.__file__).startswith(os.path.realpath('../keras')); assert keras.backend.backend() == 'mlx'; import keras_mlx; print(keras_mlx.__version__)"
 
       - name: Run Tests
         working-directory: ./keras
@@ -89,10 +93,9 @@ jobs:
         env:
           # The import test installs the backend from this requirement.
           KERAS_BACKEND_PACKAGES: ${{ github.workspace }}/keras-mlx
-        # The keras that tensorflow pulls from PyPI has no mlx backend.
         run: |
           python -m pytest integration_tests/import_test.py
-          PYTHONPATH=. python integration_tests/numerical_test.py
+          python integration_tests/numerical_test.py
 
   run_macos_tests:
     # macos-latest is Apple silicon, so this is the only leg that runs Metal.
@@ -131,13 +134,17 @@ jobs:
           # tf_keras has to match the tensorflow minor, newer ones need protobuf 6.
           pip install --no-deps "tf_keras==$(python -c 'import tensorflow as tf; print(tf.__version__.rsplit(".", 1)[0])').*"
 
-      - name: Install keras-mlx
+      - name: Install keras and keras-mlx
         working-directory: ./keras-mlx
-        run: pip install -e .
+        # The PyPI keras that tensorflow and keras-mlx pull in has no mlx
+        # backend, swap in the checkout.
+        run: |
+          pip install -e .
+          pip install --no-deps -e ../keras
 
       - name: Verify installation
-        working-directory: ./keras
-        run: python -c "import keras; assert keras.backend.backend() == 'mlx'; import keras_mlx; print(keras_mlx.__version__)"
+        working-directory: ./keras-mlx
+        run: python -c "import os, keras; assert os.path.realpath(keras.__file__).startswith(os.path.realpath('../keras')); assert keras.backend.backend() == 'mlx'; import keras_mlx; print(keras_mlx.__version__)"
 
       - name: Run Tests
         working-directory: ./keras
@@ -148,10 +155,9 @@ jobs:
         env:
           # The import test installs the backend from this requirement.
           KERAS_BACKEND_PACKAGES: ${{ github.workspace }}/keras-mlx
-        # The keras that tensorflow pulls from PyPI has no mlx backend.
         run: |
           python -m pytest integration_tests/import_test.py
-          PYTHONPATH=. python integration_tests/numerical_test.py
+          python integration_tests/numerical_test.py
 
   format:
     name: Check the code format
