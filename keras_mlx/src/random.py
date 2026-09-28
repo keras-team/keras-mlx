@@ -1,5 +1,3 @@
-import math
-
 import mlx.core as mx
 
 from keras.src.backend.config import floatx
@@ -219,59 +217,35 @@ def binomial(shape, counts, probabilities, dtype=None, seed=None):
     if isinstance(shape, int):
         shape = (shape,)
 
-    # counts will be handled as ints below
     counts_arr = mx.array(counts, dtype=mx.float32)
     probs_arr = mx.array(probabilities, dtype=mx.float32)
 
-    if mx.any(counts_arr < 0.0):
+    # One sync for both checks and the largest count.
+    bad_counts = mx.any(counts_arr < 0.0)
+    bad_probs = mx.any(mx.logical_or(probs_arr < 0.0, probs_arr > 1.0))
+    counts_arr = counts_arr.astype(mx.int32)
+    max_count = mx.max(counts_arr)
+    mx.eval(bad_counts, bad_probs, max_count)
+    if bad_counts:
         raise ValueError(
             "Invalid value for argument `counts`. All counts "
             f"must be >= 0, received counts={counts}"
         )
-    if mx.any(probs_arr < 0.0) or mx.any(probs_arr > 1.0):
+    if bad_probs:
         raise ValueError(
             "Invalid value for argument `probabilities`. "
             "All probabilities must be in [0, 1], received "
             f"probabilities={probabilities}"
         )
 
-    # Fast path for the common scalar case: draw n Bernoulli samples per
-    # output element in one vectorized call instead of a Python loop.
-    if counts_arr.size == 1 and probs_arr.size == 1:
-        n = int(counts_arr.item())
-        if n == 0:
-            return mx.zeros(shape, dtype=dtype)
-        draws = mx.random.bernoulli(
-            p=float(probs_arr.item()), shape=(n,) + tuple(shape), key=key
-        )
-        return mx.sum(draws, axis=0).astype(dtype)
-
-    # broadcast counts and probs to `shape``
-    zeros_for_bcast = mx.zeros(shape=shape, dtype=mx.float32)
-    counts_bcast = counts_arr + zeros_for_bcast
-    probs_bcast = probs_arr + zeros_for_bcast
-
-    flat_size = math.prod(shape)
-
-    counts_flat = counts_bcast.reshape((flat_size,))
-    probs_flat = probs_bcast.reshape((flat_size,))
-    out_flat = mx.zeros((flat_size,), dtype=dtype)
-
-    # for each element in flattened arrays
-    # draw a single Binomial(n_i, p_i) sample by summing n_i Bernoulli draws
-    carry_key = key
-    for i in range(flat_size):
-        n_i = counts_flat[i].astype(mx.int32).item()
-        p_i = probs_flat[i].item()
-
-        if n_i == 0:
-            out_flat[i] = 0
-            continue
-
-        carry_key, subkey = mx.random.split(carry_key)
-        bernoulli_samples = mx.random.bernoulli(key=subkey, shape=(n_i,), p=p_i)
-        binomial_val = mx.sum(bernoulli_samples, axis=0)
-        out_flat[i] = binomial_val
-
-    out = out_flat.reshape(shape)
-    return out.astype(dtype)
+    # Draw the largest count for every element and drop the draws past
+    # each element's own count.
+    max_count = max_count.item()
+    draws = mx.random.bernoulli(
+        p=probs_arr,
+        shape=(max_count,) + tuple(shape),
+        key=key,
+    )
+    trials = mx.arange(max_count).reshape((max_count,) + (1,) * len(shape))
+    draws = mx.logical_and(draws, trials < counts_arr)
+    return mx.sum(draws, axis=0).astype(dtype)
