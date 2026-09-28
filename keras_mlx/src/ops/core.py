@@ -66,9 +66,11 @@ _shared_streams_lock = threading.Lock()
 def _reset_shared_streams():
     # A forked child inherits the streams but not the threads that serve
     # them, so its first evaluation on one would block forever. Drop them
-    # and let the child's first join build its own. The lock goes too: the
-    # fork can land while another thread holds it, keras forks its
-    # PyDataset pool from the enqueuer thread while training runs.
+    # and let the child's first join build its own. This part can go once
+    # mlx#4564 ships, it restarts the scheduler threads in the child.
+    # The lock is replaced either way. The fork can land while another
+    # thread holds it, keras forks its PyDataset pool from the enqueuer
+    # thread while training runs.
     global _shared_streams, _shared_streams_lock
     _shared_streams = None
     _shared_streams_lock = threading.Lock()
