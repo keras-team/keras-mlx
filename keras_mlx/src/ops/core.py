@@ -64,7 +64,7 @@ def convert_to_tensor(x, dtype=None, sparse=None, ragged=None):
     mlx_dtype = to_mlx_dtype(dtype) if dtype is not None else None
 
     if is_tensor(x):
-        if dtype is None:
+        if dtype is None or x.dtype == mlx_dtype:
             return x
         return x.astype(mlx_dtype)
 
@@ -77,7 +77,8 @@ def convert_to_tensor(x, dtype=None, sparse=None, ragged=None):
         if x.dtype == np.float64:
             # mlx backend does not support float64
             x = x.astype(np.float32)
-        if standardize_dtype(x.dtype) == "bfloat16":
+        # standardize_dtype was a third of the per batch conversion time.
+        if x.dtype.name == "bfloat16":
             # mlx currently fails to load a numpy array with dtype=bfloat16
             # upcast to float32 to avoid error
             x = x.astype(np.float32)
@@ -150,7 +151,7 @@ def convert_to_numpy(x):
             return np.array(x.astype(mx.float32)).astype(ml_dtypes.bfloat16)
         if x.ndim == 0:
             return np.array(x.item(), dtype=standardize_dtype(x.dtype))
-    mx.eval(x)
+    # np.array evaluates through the buffer protocol, no eval needed.
     return np.array(x)
 
 
