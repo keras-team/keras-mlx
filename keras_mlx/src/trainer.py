@@ -18,6 +18,29 @@ from keras_mlx.src.ops.core import convert_to_numpy
 from keras_mlx.src.ops.core import convert_to_tensor
 
 
+class _State:
+    """Step outputs kept for callbacks. Not a dict, the tracker walks those."""
+
+    __slots__ = (
+        "trainable_variables",
+        "non_trainable_variables",
+        "optimizer_variables",
+        "metrics_variables",
+    )
+
+    def __init__(
+        self,
+        trainable_variables=None,
+        non_trainable_variables=None,
+        optimizer_variables=None,
+        metrics_variables=None,
+    ):
+        self.trainable_variables = trainable_variables
+        self.non_trainable_variables = non_trainable_variables
+        self.optimizer_variables = optimizer_variables
+        self.metrics_variables = metrics_variables
+
+
 class Trainer(BaseTrainer):
     def __init__(self):
         super().__init__()
@@ -33,12 +56,10 @@ class Trainer(BaseTrainer):
         if not getattr(self, "_mlx_state", None) or self._mlx_state_synced:
             return
 
-        trainable_variables = self._mlx_state.get("trainable_variables", None)
-        non_trainable_variables = self._mlx_state.get(
-            "non_trainable_variables", None
-        )
-        optimizer_variables = self._mlx_state.get("optimizer_variables", None)
-        metrics_variables = self._mlx_state.get("metrics_variables", None)
+        trainable_variables = self._mlx_state.trainable_variables
+        non_trainable_variables = self._mlx_state.non_trainable_variables
+        optimizer_variables = self._mlx_state.optimizer_variables
+        metrics_variables = self._mlx_state.metrics_variables
         if trainable_variables:
             for ref_v, v in zip(self.trainable_variables, trainable_variables):
                 ref_v.assign(v)
@@ -201,7 +222,6 @@ class Trainer(BaseTrainer):
             optimizer_variables,
             metrics_variables,
         ) = state
-        data = self._data_to_mlx(data)
         x, y, sample_weight = data_adapter_utils.unpack_x_y_sample_weight(data)
         grad_fn = mx.value_and_grad(self.compute_loss_and_updates)
 
@@ -268,7 +288,6 @@ class Trainer(BaseTrainer):
             non_trainable_variables,
             metrics_variables,
         ) = state
-        data = self._data_to_mlx(data)
         x, y, sample_weight = data_adapter_utils.unpack_x_y_sample_weight(data)
         (
             loss,
@@ -304,7 +323,6 @@ class Trainer(BaseTrainer):
             kwargs["training"] = False
 
         x, _, _ = data_adapter_utils.unpack_x_y_sample_weight(data)
-        x = self._data_to_mlx(x)
         outputs, non_trainable_variables = self.stateless_call(
             trainable_variables, non_trainable_variables, x, **kwargs
         )
@@ -533,17 +551,15 @@ class Trainer(BaseTrainer):
 
                         # Setting _mlx_state lets callbacks force a state sync
                         # if they need to.
-                        self._mlx_state = {
-                            "trainable_variables": trainable_variables,
-                            "non_trainable_variables": non_trainable_variables,
-                            "optimizer_variables": optimizer_variables,
-                            "metrics_variables": metrics_variables,
-                        }
+                        self._mlx_state = _State(
+                            trainable_variables,
+                            non_trainable_variables,
+                            optimizer_variables,
+                            metrics_variables,
+                        )
 
                         # Callbacks
-                        callbacks.on_train_batch_end(
-                            end_step, pythonify_logs(logs)
-                        )
+                        callbacks.on_train_batch_end(end_step, logs)
                         if self.stop_training:
                             break
 
@@ -682,14 +698,14 @@ class Trainer(BaseTrainer):
                     metrics_variables,
                 ) = state
 
-                self._mlx_state = {
-                    # I wouldn't recommend modifying non-trainable model state
-                    # during evaluate(), but it's allowed.
-                    "trainable_variables": trainable_variables,
-                    "non_trainable_variables": non_trainable_variables,
-                    "metrics_variables": metrics_variables,
-                }
-                callbacks.on_test_batch_end(end_step, pythonify_logs(logs))
+                # Modifying non trainable model state during evaluate() is
+                # unusual but allowed, so it is synced back too.
+                self._mlx_state = _State(
+                    trainable_variables,
+                    non_trainable_variables,
+                    metrics_variables=metrics_variables,
+                )
+                callbacks.on_test_batch_end(end_step, logs)
                 if self.stop_evaluating:
                     break
 
@@ -776,11 +792,11 @@ class Trainer(BaseTrainer):
                 (trainable_variables, non_trainable_variables) = state
                 outputs = append_to_outputs(batch_outputs, outputs)
 
-                self._mlx_state = {
-                    # I wouldn't recommend modifying non-trainable model
-                    # state during predict(), but it's allowed.
-                    "non_trainable_variables": non_trainable_variables,
-                }
+                # Modifying non trainable model state during predict() is
+                # unusual but allowed, so it is synced back too.
+                self._mlx_state = _State(
+                    non_trainable_variables=non_trainable_variables
+                )
                 callbacks.on_predict_batch_end(
                     end_step, {"outputs": batch_outputs}
                 )
@@ -844,12 +860,12 @@ class Trainer(BaseTrainer):
             optimizer_variables,
             metrics_variables,
         ) = state
-        self._mlx_state = {
-            "trainable_variables": trainable_variables,
-            "non_trainable_variables": non_trainable_variables,
-            "optimizer_variables": optimizer_variables,
-            "metrics_variables": metrics_variables,
-        }
+        self._mlx_state = _State(
+            trainable_variables,
+            non_trainable_variables,
+            optimizer_variables,
+            metrics_variables,
+        )
         self.mlx_state_sync()
 
         logs = pythonify_logs(logs)
@@ -890,11 +906,11 @@ class Trainer(BaseTrainer):
 
         # State sync
         trainable_variables, non_trainable_variables, metrics_variables = state
-        self._mlx_state = {
-            "trainable_variables": trainable_variables,
-            "non_trainable_variables": non_trainable_variables,
-            "metrics_variables": metrics_variables,
-        }
+        self._mlx_state = _State(
+            trainable_variables,
+            non_trainable_variables,
+            metrics_variables=metrics_variables,
+        )
         self.mlx_state_sync()
 
         logs = pythonify_logs(logs)
@@ -924,9 +940,9 @@ class Trainer(BaseTrainer):
         batch_outputs, state = self.predict_function(state, data())
         mx.eval(batch_outputs, state)
         trainable_variables, non_trainable_variables = state
-        self._mlx_state = {
-            "non_trainable_variables": non_trainable_variables,
-        }
+        self._mlx_state = _State(
+            non_trainable_variables=non_trainable_variables
+        )
         self.mlx_state_sync()
         # TODO: This copies but we could avoid it
         batch_outputs = tree.map_structure(convert_to_numpy, batch_outputs)
