@@ -64,8 +64,7 @@ jobs:
 
       - name: Install keras and keras-mlx
         working-directory: ./keras-mlx
-        # The PyPI keras that tensorflow and keras-mlx pull in has no mlx
-        # backend, swap in the checkout.
+        # Replace the PyPI keras with the checkout.
         run: |
           pip install -e .
           pip install --no-deps -e ../keras
@@ -136,8 +135,7 @@ jobs:
 
       - name: Install keras and keras-mlx
         working-directory: ./keras-mlx
-        # The PyPI keras that tensorflow and keras-mlx pull in has no mlx
-        # backend, swap in the checkout.
+        # Replace the PyPI keras with the checkout.
         run: |
           pip install -e .
           pip install --no-deps -e ../keras
