@@ -1714,9 +1714,9 @@ def slogdet(x):
         w = mx.linalg.eigvals(x)
     absw = mx.abs(w)
     logabsdet = mx.sum(mx.log(absw), axis=-1)
-    # The unit eigenvalues cannot overflow and the real part of their
-    # product is the determinant sign. Zero eigenvalues zero it out.
-    unit = mx.where(absw > 0, w / absw.astype(mx.complex64), mx.array(0j))
+    # Metal complex division gives nan for a tiny divisor, so divide the parts.
+    safe = mx.where(absw > 0, absw, 1)
+    unit = mx.real(w) / safe + 1j * (mx.imag(w) / safe)
     sign = mx.round(mx.real(mx.prod(unit, axis=-1)))
     return (sign.astype(target), logabsdet.astype(target))
 
