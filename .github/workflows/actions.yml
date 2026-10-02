@@ -64,7 +64,7 @@ jobs:
 
       - name: Install keras-mlx
         working-directory: ./keras-mlx
-        # tensorflow pulls in PyPI keras, which would shadow the checkout.
+        # Drop the PyPI keras tensorflow pulls in, so only the checkout imports.
         run: |
           pip install --no-deps -e .
           pip uninstall -y keras
@@ -136,7 +136,7 @@ jobs:
 
       - name: Install keras-mlx
         working-directory: ./keras-mlx
-        # tensorflow pulls in PyPI keras, which would shadow the checkout.
+        # Drop the PyPI keras tensorflow pulls in, so only the checkout imports.
         run: |
           pip install --no-deps -e .
           pip uninstall -y keras
