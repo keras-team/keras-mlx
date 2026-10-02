@@ -15,7 +15,9 @@ from keras.src.backend.common.backend_utils import canonicalize_axis
 from keras.src.backend.common.backend_utils import (
     compute_adaptive_pooling_window_sizes,
 )
+from keras.src.backend.common.variables import is_float_dtype
 from keras.src.backend.config import epsilon
+from keras.src.backend.config import floatx
 from keras.src.backend.config import standardize_data_format
 from keras.src.utils.argument_validation import standardize_tuple
 from keras_mlx.src.ops.core import cast
@@ -791,6 +793,9 @@ def sparse_categorical_crossentropy(target, output, from_logits=False, axis=-1):
 def binary_crossentropy(target, output, from_logits=False):
     target = convert_to_tensor(target)
     output = convert_to_tensor(output)
+    if not is_float_dtype(output.dtype):
+        output = cast(output, floatx())
+    target = cast(target, output.dtype)
 
     if target.shape != output.shape:
         raise ValueError(
