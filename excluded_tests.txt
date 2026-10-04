@@ -19,6 +19,7 @@ keras/src/layers/core/einsum_dense_test.py::EinsumDenseTest::test_quantize_dtype
 keras/src/layers/core/einsum_dense_test.py::EinsumDenseTest::test_quantize_float8
 keras/src/layers/core/einsum_dense_test.py::EinsumDenseTest::test_quantize_float8_fitting
 keras/src/layers/core/einsum_dense_test.py::EinsumDenseTest::test_quantize_float8_inference
+keras/src/layers/core/einsum_dense_test.py::EinsumDenseTest::test_quantized_forward_matches_dense_float8
 keras/src/layers/layer_test.py::LayerTest::test_quantized_layer_with_remat
 # Fails under compile until pluggable_backend has keras-team/keras#23568.
 keras/src/layers/preprocessing/image_preprocessing/equalization_test.py::EqualizationTest::test_layer
@@ -42,6 +43,7 @@ keras/src/ops/math_test.py::MathOpsCorrectnessTest::test_istft8
 keras/src/ops/numpy_test.py::NumpyOneInputOpsCorrectnessTest::test_argpartition
 keras/src/ops/numpy_test.py::NumpyOneInputOpsDynamicShapeTest::test_argmax_negative_zero
 keras/src/ops/numpy_test.py::NumpyOneInputOpsDynamicShapeTest::test_argmin_negative_zero
+keras/src/quantizers/float8_scaling_test.py::Float8ScalingTest::test_quantize_and_dequantize
 keras/src/quantizers/gptq_test.py::TestModelQuantization::test_quantize_gptq_combinations_string_dataset_group_wise
 keras/src/quantizers/gptq_test.py::TestModelQuantization::test_quantize_gptq_combinations_string_dataset_group_wise_act_order
 keras/src/quantizers/quantizers_test.py::QuantizersTest::test_quantize_and_dequantize
