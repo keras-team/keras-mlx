@@ -1520,7 +1520,8 @@ def divide(x1, x2):
 def divide_no_nan(x1, x2):
     x1 = convert_to_tensor(x1)
     x2 = convert_to_tensor(x2)
-    return mx.where(x2 == 0, 0, mx.divide(x1, x2))
+    safe_x2 = mx.where(x2 == 0, 1, x2)
+    return mx.where(x2 == 0, 0, mx.divide(x1, safe_x2))
 
 
 def true_divide(x1, x2):
@@ -1713,9 +1714,9 @@ def slogdet(x):
         w = mx.linalg.eigvals(x)
     absw = mx.abs(w)
     logabsdet = mx.sum(mx.log(absw), axis=-1)
-    # The unit eigenvalues cannot overflow and the real part of their
-    # product is the determinant sign. Zero eigenvalues zero it out.
-    unit = mx.where(absw > 0, w / absw.astype(mx.complex64), mx.array(0j))
+    # Metal complex division gives nan for a tiny divisor, so divide the parts.
+    safe = mx.where(absw > 0, absw, 1)
+    unit = mx.real(w) / safe + 1j * (mx.imag(w) / safe)
     sign = mx.round(mx.real(mx.prod(unit, axis=-1)))
     return (sign.astype(target), logabsdet.astype(target))
 
