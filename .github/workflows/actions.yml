@@ -103,6 +103,8 @@ jobs:
 
     env:
       KERAS_HOME: ../keras-mlx/.github/workflows/config
+      # Torch picks MPS here, and the keras tests read tensors with np.array.
+      KERAS_TORCH_DEVICE: cpu
 
     steps:
       - name: Set up Python
