@@ -64,7 +64,10 @@ jobs:
 
       - name: Install keras-mlx
         working-directory: ./keras-mlx
-        run: pip install -e .
+        run: |
+          pip install -e .
+          # Drop the PyPI keras so only the checkout can be imported.
+          pip uninstall -y keras
 
       - name: Verify installation
         working-directory: ./keras
@@ -89,9 +92,9 @@ jobs:
         env:
           # The import test installs the backend from this requirement.
           KERAS_BACKEND_PACKAGES: ${{ github.workspace }}/keras-mlx
-        # The keras that tensorflow pulls from PyPI has no mlx backend.
         run: |
           python -m pytest integration_tests/import_test.py
+          # A script gets its own folder on sys.path, not the cwd.
           PYTHONPATH=. python integration_tests/numerical_test.py
 
   run_macos_tests:
@@ -133,7 +136,10 @@ jobs:
 
       - name: Install keras-mlx
         working-directory: ./keras-mlx
-        run: pip install -e .
+        run: |
+          pip install -e .
+          # Drop the PyPI keras so only the checkout can be imported.
+          pip uninstall -y keras
 
       - name: Verify installation
         working-directory: ./keras
@@ -148,9 +154,9 @@ jobs:
         env:
           # The import test installs the backend from this requirement.
           KERAS_BACKEND_PACKAGES: ${{ github.workspace }}/keras-mlx
-        # The keras that tensorflow pulls from PyPI has no mlx backend.
         run: |
           python -m pytest integration_tests/import_test.py
+          # A script gets its own folder on sys.path, not the cwd.
           PYTHONPATH=. python integration_tests/numerical_test.py
 
   format:

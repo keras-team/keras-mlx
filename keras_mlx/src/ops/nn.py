@@ -170,13 +170,16 @@ def leaky_relu(x, negative_slope=0.2):
 
 def hard_sigmoid(x):
     x = convert_to_tensor(x)
+    # mlx promotes ints on its own, but to float32 rather than floatx.
+    dtype = standardize_dtype(x.dtype)
+    if "int" in dtype or dtype == "bool":
+        x = cast(x, floatx())
     return mx.maximum(0, mx.minimum(1, x / 6 + 0.5))
 
 
 def hard_silu(x):
     x = convert_to_tensor(x)
-    xclipped = mx.minimum(mx.maximum(x, -3), 3)
-    return x * (xclipped + 3) / 6
+    return x * hard_sigmoid(x)
 
 
 def elu(x, alpha=1.0):
