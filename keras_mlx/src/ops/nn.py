@@ -56,6 +56,18 @@ def compute_conv_padding_args_for_mlx(
         raise ValueError(f"Invalid padding value: {padding}")
 
 
+def _pad_unequal_sides(inputs, mlx_padding):
+    # mlx conv input grads are wrong when the padding sides differ.
+    # Remove once the mlx conv vjp uses the low padding.
+    if not isinstance(mlx_padding, tuple):
+        return inputs, mlx_padding
+    start_paddings, end_paddings = mlx_padding
+    if start_paddings == end_paddings:
+        return inputs, mlx_padding
+    pad_width = [(0, 0), *zip(start_paddings, end_paddings), (0, 0)]
+    return mx.pad(inputs, pad_width), 0
+
+
 def compute_conv_transpose_padding_args_for_mlx(
     padding,
     num_spatial_dims,
@@ -504,6 +516,7 @@ def conv(
         dilation_rate,
         strides,
     )
+    inputs, mlx_padding = _pad_unequal_sides(inputs, mlx_padding)
 
     channels = inputs.shape[-1]
     kernel_in_channels = kernel.shape[-1]
@@ -583,6 +596,7 @@ def depthwise_conv(
         dilation_rate,
         strides,
     )
+    inputs, mlx_padding = _pad_unequal_sides(inputs, mlx_padding)
 
     result = mx.conv_general(
         inputs,
@@ -626,6 +640,51 @@ def separable_conv(
         data_format=data_format,
         dilation_rate=dilation_rate,
     )
+
+
+def _conv_transpose_general(
+    inputs,
+    kernel,
+    mlx_padding,
+    kernel_spatial_shape,
+    dilation_rate,
+    strides,
+    groups,
+):
+    # mlx input grads need equal padding no larger than the kernel extent, so
+    # convolve with that and crop. Padding the input first does not work here
+    # because input_dilation pads after dilating.
+    # Remove once the mlx conv vjp handles uneven and large padding.
+    start_paddings, end_paddings = mlx_padding
+    kernel_extents = [
+        (k - 1) * d for k, d in zip(kernel_spatial_shape, dilation_rate)
+    ]
+    clipped_ends = [min(e, k) for e, k in zip(end_paddings, kernel_extents)]
+    paddings = [max(s, e) for s, e in zip(start_paddings, clipped_ends)]
+
+    result = mx.conv_general(
+        inputs,
+        kernel,
+        stride=1,  # stride is handled by input_dilation
+        padding=(paddings, paddings),
+        kernel_dilation=dilation_rate,
+        input_dilation=strides,
+        groups=groups,
+        flip=False,
+    )
+    crops = [
+        builtins.slice(p - s, size - (p - e))
+        for p, s, e, size in zip(
+            paddings, start_paddings, clipped_ends, result.shape[1:-1]
+        )
+    ]
+    result = result[(builtins.slice(None), *crops)]
+    # Past the kernel extent the window only covers padding, so it is zero.
+    extra_ends = [e - c for e, c in zip(end_paddings, clipped_ends)]
+    if any(extra_ends):
+        pad_width = [(0, 0), *((0, e) for e in extra_ends), (0, 0)]
+        result = mx.pad(result, pad_width)
+    return result
 
 
 def conv_transpose(
@@ -683,15 +742,14 @@ def conv_transpose(
         # manually flip spatial dimensions until fixed
         kernel = reverse_sequence(kernel, axis=ax)
 
-    result = mx.conv_general(
+    result = _conv_transpose_general(
         inputs,
         kernel,
-        stride=1,  # stride is handled by input_dilation
-        padding=mlx_padding,
-        kernel_dilation=dilation_rate,
-        input_dilation=strides,
-        groups=groups,
-        flip=False,
+        mlx_padding,
+        kernel_spatial_shape,
+        dilation_rate,
+        strides,
+        groups,
     )
 
     if data_format == "channels_first":
