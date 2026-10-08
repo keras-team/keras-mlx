@@ -92,12 +92,7 @@ def convert_to_tensor(x, dtype=None, sparse=None, ragged=None):
             x = np.ascontiguousarray(x)
         return mx.array(x, dtype=mlx_dtype)
 
-    if isinstance(x, (list, tuple)):
-        # mx.array ignores __mlx_array__ inside lists, so unwrap Variables.
-        # Remove once mlx honors it there.
-        x = tree.map_structure(
-            lambda e: e.value if isinstance(e, Variable) else e, x
-        )
+    if isinstance(x, list):
         return mx.array(x, dtype=mlx_dtype)
 
     if _is_h5py_dataset(x):
