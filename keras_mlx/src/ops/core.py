@@ -56,15 +56,6 @@ def _is_h5py_dataset(obj):
     )
 
 
-def _variables_to_values(x):
-    # mx.array takes arrays inside lists but not Keras Variables.
-    if isinstance(x, Variable):
-        return x.value
-    if isinstance(x, (list, tuple)):
-        return [_variables_to_values(e) for e in x]
-    return x
-
-
 def convert_to_tensor(x, dtype=None, sparse=None, ragged=None):
     if sparse:
         raise ValueError("`sparse=True` is not supported with mlx backend")
@@ -101,8 +92,13 @@ def convert_to_tensor(x, dtype=None, sparse=None, ragged=None):
             x = np.ascontiguousarray(x)
         return mx.array(x, dtype=mlx_dtype)
 
-    if isinstance(x, list):
-        return mx.array(_variables_to_values(x), dtype=mlx_dtype)
+    if isinstance(x, (list, tuple)):
+        # mx.array ignores __mlx_array__ inside lists, so unwrap Variables.
+        # Remove once mlx honors it there.
+        x = tree.map_structure(
+            lambda e: e.value if isinstance(e, Variable) else e, x
+        )
+        return mx.array(x, dtype=mlx_dtype)
 
     if _is_h5py_dataset(x):
         if h5py is None:
