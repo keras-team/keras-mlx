@@ -164,6 +164,8 @@ def top_k(x, k, sorted=True, is_stable=True):
             )
             indices = mx.take_along_axis(indices, order, axis=-1)
 
+    # The indices come from x, keep mlx from differentiating them.
+    indices = mx.stop_gradient(indices)
     values = mx.take_along_axis(x, indices, axis=-1)
     return values, indices.astype(mx.int32)
 

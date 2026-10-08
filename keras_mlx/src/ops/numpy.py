@@ -273,13 +273,16 @@ def arctanh(x):
 def argmax(x, axis=None, keepdims=False):
     x = convert_to_tensor(x)
     # cast to int32 to align with other backends
-    return mx.argmax(x, axis=axis, keepdims=keepdims).astype(mx.int32)
+    indices = mx.argmax(x, axis=axis, keepdims=keepdims)
+    # Indices carry no grad, and mlx raises if a later gather sees one.
+    return mx.stop_gradient(indices).astype(mx.int32)
 
 
 def argmin(x, axis=None, keepdims=False):
     x = convert_to_tensor(x)
     # cast to int32 to align with other backends
-    return mx.argmin(x, axis=axis, keepdims=keepdims).astype(mx.int32)
+    indices = mx.argmin(x, axis=axis, keepdims=keepdims)
+    return mx.stop_gradient(indices).astype(mx.int32)
 
 
 def argsort(x, axis=-1):
@@ -294,13 +297,14 @@ def argsort(x, axis=-1):
     if x.dtype == mx.bool_:
         x = x.astype(mx.int8)
     # cast to int32 to align with other backends
-    return mx.argsort(x, axis=axis).astype(mx.int32)
+    return mx.stop_gradient(mx.argsort(x, axis=axis)).astype(mx.int32)
 
 
 def argpartition(x, kth, axis=-1):
     x = convert_to_tensor(x)
     # cast to int32 to align with other backends
-    return mx.argpartition(x, kth, axis).astype(mx.int32)
+    indices = mx.argpartition(x, kth, axis)
+    return mx.stop_gradient(indices).astype(mx.int32)
 
 
 def array(x, dtype=None):
@@ -1154,10 +1158,7 @@ def _quantile(
     q_ndim = q_full.ndim
     q = q_full.reshape(-1)
     y, axis = _quantile_flatten_axis(x, axis)
-    # Gather with argsort rather than calling mx.sort, whose vjp routes each
-    # gradient through the inverse of the sort permutation instead of the
-    # forward one and so returns gradients against the wrong elements.
-    sorted_y = mx.take_along_axis(y, mx.argsort(y, axis=-1), axis=-1)
+    sorted_y = mx.sort(y, axis=-1)
     if nan_aware:
         counts = mx.sum(
             mx.logical_not(mx.isnan(y)), axis=-1, keepdims=True
@@ -1180,7 +1181,7 @@ def _quantile(
         indices = mx.broadcast_to(
             indices, sorted_y.shape[:-1] + indices.shape[-1:]
         )
-        return mx.take_along_axis(sorted_y, indices, axis=-1)
+        return take_along_axis(sorted_y, indices, axis=-1)
 
     if method in ("nearest", "lower", "higher"):
         gathered = gather(get_indices(method))
@@ -1333,14 +1334,10 @@ def sort(x, axis=-1):
     # the input back.
     if x.size == 0:
         return mx.reshape(x, (0,)) if axis is None else x
-    # Metal has no bool sort kernel, sort bool values as int8. bool carries
-    # no gradient so it can use mx.sort directly.
+    # Metal has no bool sort kernel, sort bool values as int8.
     if x.dtype == mx.bool_:
         return mx.sort(x.astype(mx.int8), axis=axis).astype(mx.bool_)
-    # Gather with argsort rather than calling mx.sort, whose vjp routes each
-    # gradient through the inverse of the sort permutation instead of the
-    # forward one and so returns gradients against the wrong elements.
-    return mx.take_along_axis(x, mx.argsort(x, axis=axis), axis=axis)
+    return mx.sort(x, axis=axis)
 
 
 def split(x, indices_or_sections, axis=0):
@@ -1367,13 +1364,15 @@ def swapaxes(x, axis1, axis2):
 
 def take(x, indices, axis=None):
     x = convert_to_tensor(x)
-    indices = convert_to_tensor(indices)
+    # mlx raises on grads through gather indices, which carry none.
+    indices = mx.stop_gradient(convert_to_tensor(indices))
     return mx.take(x, indices, axis=axis)
 
 
 def take_along_axis(x, indices, axis=None):
     x = convert_to_tensor(x)
-    indices = convert_to_tensor(indices)
+    # Same as take.
+    indices = mx.stop_gradient(convert_to_tensor(indices))
     return mx.take_along_axis(x, indices, axis=axis)
 
 

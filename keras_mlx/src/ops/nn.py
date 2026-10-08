@@ -27,6 +27,7 @@ from keras_mlx.src.ops.core import scan
 from keras_mlx.src.ops.core import to_mlx_dtype
 from keras_mlx.src.ops.numpy import _unique_prepare
 from keras_mlx.src.ops.numpy import flip
+from keras_mlx.src.ops.numpy import take_along_axis
 
 
 def compute_conv_padding_args_for_mlx(
@@ -246,13 +247,8 @@ def log_softmax(x, axis=-1):
 
 
 def sparsemax(x, axis=-1):
-    # Sort logits along the specified axis in descending order. Gather with
-    # argsort rather than calling mx.sort, whose vjp routes each gradient
-    # through the inverse of the sort permutation instead of the forward one
-    # and so returns gradients against the wrong elements.
     logits = convert_to_tensor(x)
-    order = mx.argsort(-1.0 * logits, axis=axis)
-    logits_sorted = mx.take_along_axis(logits, order, axis=axis)
+    logits_sorted = -mx.sort(-logits, axis=axis)
     logits_cumsum = mx.cumsum(logits_sorted, axis=axis)  # find cumulative sum
     r = mx.arange(1, logits.shape[axis] + 1)  # Determine the sparsity
     r_shape = [1] * logits.ndim
@@ -263,7 +259,7 @@ def sparsemax(x, axis=-1):
     # index, so gather that one element rather than summing the whole
     # support, which overshoots tau as soon as more than one index survives.
     k = mx.sum(support, axis=axis, keepdims=True).astype(mx.int32)
-    cumsum_at_k = mx.take_along_axis(logits_cumsum, k - 1, axis=axis)
+    cumsum_at_k = take_along_axis(logits_cumsum, k - 1, axis=axis)
     tau = (cumsum_at_k - 1) / k
     output = mx.maximum(logits - tau, 0.0)
     return output
