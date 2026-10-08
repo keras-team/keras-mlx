@@ -6,13 +6,11 @@ For development, you need the `keras` repository and the `keras-mlx`
 repository checked out locally. That's because the unit tests code is in the
 keras repository.
 
-We first check out the main `keras` repository and the `pluggable_backend`
-branch.
+We first check out the `keras` repository. CI tests against `master`.
 
 ```
 gh repo clone keras-team/keras
 cd keras
-git checkout pluggable_backend
 pip install -r requirements-common.txt
 cd ..
 ```
