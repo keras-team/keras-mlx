@@ -1,5 +1,8 @@
+import contextlib
+
 import mlx.core as mx
 
+from keras.src.backend.common import global_state
 from keras.src.backend.config import floatx
 from keras.src.random.seed_generator import SeedGenerator  # noqa: F401
 from keras.src.random.seed_generator import draw_seed
@@ -13,11 +16,42 @@ from keras_mlx.src.ops.core import to_mlx_dtype
 GAMMA_ROUNDS = 24
 
 
+# Set per thread while the trainer traces a compiled step.
+_TRACING_COMPILED_STEP = "mlx_tracing_compiled_step"
+
+
+@contextlib.contextmanager
+def tracing_compiled_step():
+    previous = global_state.get_global_attribute(_TRACING_COMPILED_STEP)
+    global_state.set_global_attribute(_TRACING_COMPILED_STEP, True)
+    try:
+        yield
+    finally:
+        global_state.set_global_attribute(_TRACING_COMPILED_STEP, previous)
+
+
 def mlx_draw_seed(seed):
     if isinstance(seed, mx.array):
         return seed
-    else:
-        return draw_seed(seed)
+    if seed is None and global_state.get_global_attribute(
+        _TRACING_COMPILED_STEP
+    ):
+        # Unseeded draws would be baked into the compiled step as constants.
+        raise ValueError(
+            "[MLX RNG] When compiling a function with `mx.compile`, "
+            "you should only use seeded random ops, e.g. you should "
+            "create a `SeedGenerator` instance, attach it to your "
+            "layer/model, and pass the instance as the `seed` argument when "
+            "calling random ops. Unseeded random ops would become constant "
+            "after compilation. Example:\n\n"
+            "```\n"
+            "# Make sure to set the seed generator as a layer attribute\n"
+            "self.seed_generator = keras.random.SeedGenerator(seed=1337)\n"
+            "...\n"
+            "out = keras.random.normal(shape=(1,), seed=self.seed_generator)\n"
+            "```"
+        )
+    return draw_seed(seed)
 
 
 def normal(shape, mean=0.0, stddev=1.0, dtype=None, seed=None):
