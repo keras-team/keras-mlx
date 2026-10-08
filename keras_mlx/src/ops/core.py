@@ -435,9 +435,24 @@ def stop_gradient(variable):
     return mx.stop_gradient(variable)
 
 
+@mx.custom_function
+def _unstack_leading(x):
+    return tuple(x)
+
+
+@_unstack_leading.vjp
+def _unstack_leading_vjp(primals, cotangents, outputs):
+    # The slice vjp keeps a full size cotangent per slice alive under
+    # mx.compile, stacking them keeps memory linear in the length.
+    return mx.stack(cotangents)
+
+
 def unstack(x, num=None, axis=0):
-    y = x.split(num or x.shape[axis], axis=axis)
-    return [yi.squeeze(axis) for yi in y]
+    x = mx.moveaxis(convert_to_tensor(x), axis, 0)
+    # A custom_function with a vjp crashes when it has no outputs.
+    if x.shape[0] == 0:
+        return []
+    return list(_unstack_leading(x))
 
 
 def random_seed_dtype():
@@ -479,6 +494,7 @@ def scan(f, init, xs=None, length=None, reverse=False, unroll=1):
         xs_flat = tree.flatten(xs)
         xs_flat = [convert_to_tensor(elem) for elem in xs_flat]
         n = int(length) if length is not None else shape(xs_flat[0])[0]
+    xs_unstacked = [unstack(x) for x in xs_flat]
 
     init_flat = tree.flatten(init)
     init_flat = [convert_to_tensor(v) for v in init_flat]
@@ -489,7 +505,7 @@ def scan(f, init, xs=None, length=None, reverse=False, unroll=1):
     ys = []
     maybe_reversed = reversed if reverse else lambda x: x
     for i in maybe_reversed(range(n)):
-        xs_slice = [x[i] for x in xs_flat]
+        xs_slice = [x[i] for x in xs_unstacked]
         packed_xs = pack_input(xs_slice) if len(xs_slice) > 0 else None
         carry, y = f(carry, packed_xs)
         ys.append(y if y is not None else dummy_y)

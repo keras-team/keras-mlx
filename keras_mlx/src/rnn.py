@@ -260,7 +260,7 @@ def lstm(
         x = x + convert_to_tensor(bias)
 
     outputs = []
-    for x_t in x:
+    for x_t in unstack(x):
         z = x_t + mx.matmul(h, recurrent_kernel)
         z_i, z_f, z_c, z_o = mx.split(z, 4, axis=-1)
         i = recurrent_activation(z_i)
@@ -312,7 +312,7 @@ def gru(
         recurrent_bias = bias[1]
 
     outputs = []
-    for x_t in x:
+    for x_t in unstack(x):
         inner = mx.matmul(h, recurrent_kernel)
         if recurrent_bias is not None:
             inner = inner + recurrent_bias
