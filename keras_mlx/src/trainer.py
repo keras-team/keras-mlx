@@ -548,6 +548,8 @@ class Trainer(BaseTrainer):
                                 metrics_variables=True,
                                 purge_model_variables=True,
                             )
+                            # The finally sync restores these if a step raises.
+                            self._mlx_state = _State(*state)
                             self._state_synced = False
 
                         logs, state = self.train_function(state, iter(data))
@@ -686,43 +688,49 @@ class Trainer(BaseTrainer):
         self.reset_metrics()
 
         self._state_synced = True
-        with epoch_iterator.catch_stop_iteration():
-            for begin_step, end_step, data in epoch_iterator:
-                callbacks.on_test_batch_begin(begin_step)
+        try:
+            with epoch_iterator.catch_stop_iteration():
+                for begin_step, end_step, data in epoch_iterator:
+                    callbacks.on_test_batch_begin(begin_step)
 
-                if self._state_synced:
-                    # The state may have been synced by a callback.
-                    state = self._get_mlx_state(
-                        trainable_variables=True,
-                        non_trainable_variables=True,
-                        metrics_variables=True,
-                        purge_model_variables=True,
+                    if self._state_synced:
+                        # The state may have been synced by a callback.
+                        state = self._get_mlx_state(
+                            trainable_variables=True,
+                            non_trainable_variables=True,
+                            metrics_variables=True,
+                            purge_model_variables=True,
+                        )
+                        # The finally sync restores these if a step raises.
+                        self._mlx_state = _State(
+                            state[0], state[1], metrics_variables=state[2]
+                        )
+                        self._state_synced = False
+
+                    logs, state = self.test_function(state, iter(data))
+                    mx.eval(logs, state)
+                    (
+                        trainable_variables,
+                        non_trainable_variables,
+                        metrics_variables,
+                    ) = state
+
+                    # Modifying non trainable model state during evaluate()
+                    # is unusual but allowed, so it is synced back too.
+                    self._mlx_state = _State(
+                        trainable_variables,
+                        non_trainable_variables,
+                        metrics_variables=metrics_variables,
                     )
-                    self._state_synced = False
-
-                logs, state = self.test_function(state, iter(data))
-                mx.eval(logs, state)
-                (
-                    trainable_variables,
-                    non_trainable_variables,
-                    metrics_variables,
-                ) = state
-
-                # Modifying non trainable model state during evaluate() is
-                # unusual but allowed, so it is synced back too.
-                self._mlx_state = _State(
-                    trainable_variables,
-                    non_trainable_variables,
-                    metrics_variables=metrics_variables,
-                )
-                callbacks.on_test_batch_end(end_step, logs)
-                if self.stop_evaluating:
-                    break
-
-        self.state_sync()
+                    callbacks.on_test_batch_end(end_step, logs)
+                    if self.stop_evaluating:
+                        break
+        finally:
+            # Reattach the purged variables even if a step or callback raises.
+            self.state_sync()
+            self._mlx_state = None
         logs = pythonify_logs(self._get_metrics_result_or_logs(logs))
         callbacks.on_test_end(logs)
-        self._mlx_state = None
 
         if return_dict:
             return logs
@@ -784,37 +792,48 @@ class Trainer(BaseTrainer):
         self._state_synced = True
         outputs = None
         non_trainable_variables = None
-        with epoch_iterator.catch_stop_iteration():
-            for begin_step, end_step, data in epoch_iterator:
-                callbacks.on_predict_batch_begin(begin_step)
-                if self._state_synced:
-                    # The state may have been synced by a callback.
-                    state = self._get_mlx_state(
-                        trainable_variables=True,
-                        non_trainable_variables=True,
+        try:
+            with epoch_iterator.catch_stop_iteration():
+                for begin_step, end_step, data in epoch_iterator:
+                    callbacks.on_predict_batch_begin(begin_step)
+                    if self._state_synced:
+                        # The state may have been synced by a callback.
+                        state = self._get_mlx_state(
+                            trainable_variables=True,
+                            non_trainable_variables=True,
+                        )
+                        self._purge_model_variables(
+                            non_trainable_variables=True
+                        )
+                        # The finally sync restores these if a step raises.
+                        self._mlx_state = _State(
+                            non_trainable_variables=state[1]
+                        )
+                        self._state_synced = False
+                    else:
+                        state = (state[0], non_trainable_variables)
+                    batch_outputs, state = self.predict_function(
+                        state, iter(data)
                     )
-                    self._purge_model_variables(non_trainable_variables=True)
-                    self._state_synced = False
-                else:
-                    state = (state[0], non_trainable_variables)
-                batch_outputs, state = self.predict_function(state, iter(data))
-                mx.eval(batch_outputs, state)
-                (trainable_variables, non_trainable_variables) = state
-                outputs = append_to_outputs(batch_outputs, outputs)
+                    mx.eval(batch_outputs, state)
+                    (trainable_variables, non_trainable_variables) = state
+                    outputs = append_to_outputs(batch_outputs, outputs)
 
-                # Modifying non trainable model state during predict() is
-                # unusual but allowed, so it is synced back too.
-                self._mlx_state = _State(
-                    non_trainable_variables=non_trainable_variables
-                )
-                callbacks.on_predict_batch_end(
-                    end_step, {"outputs": batch_outputs}
-                )
-                if self.stop_predicting:
-                    break
-        self.state_sync()
+                    # Modifying non trainable model state during predict() is
+                    # unusual but allowed, so it is synced back too.
+                    self._mlx_state = _State(
+                        non_trainable_variables=non_trainable_variables
+                    )
+                    callbacks.on_predict_batch_end(
+                        end_step, {"outputs": batch_outputs}
+                    )
+                    if self.stop_predicting:
+                        break
+        finally:
+            # Reattach the purged variables even if a step or callback raises.
+            self.state_sync()
+            self._mlx_state = None
         callbacks.on_predict_end()
-        self._mlx_state = None
         outputs = tree.map_structure(
             convert_to_numpy, outputs
         )  # TODO: This copies but we could avoid it
