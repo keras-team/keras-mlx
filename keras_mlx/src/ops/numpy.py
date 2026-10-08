@@ -1354,7 +1354,12 @@ def stack(x, axis=0):
 
 def std(x, axis=None, keepdims=False):
     # Reuse var so std inherits the float32 compute precision safeguard.
-    return mx.sqrt(var(x, axis=axis, keepdims=keepdims))
+    result = var(x, axis=axis, keepdims=keepdims)
+    if mx.issubdtype(result.dtype, mx.complexfloating):
+        # Our var casts back to the complex input dtype like the jax backend,
+        # but std is real like numpy.
+        result = mx.real(result)
+    return mx.sqrt(result)
 
 
 def swapaxes(x, axis1, axis2):
