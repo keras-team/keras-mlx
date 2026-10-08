@@ -88,6 +88,10 @@ def convert_to_tensor(x, dtype=None, sparse=None, ragged=None):
             # it casts the output to complex64, so we force cast to bfloat16
             # (but by upcasting we avoid x.dtype=bfloat16 and mlx_dtype=None)
             mlx_dtype = mx.bfloat16 if mlx_dtype is None else mlx_dtype
+        # mlx 0.32 raises on negative stride numpy views like img[..., ::-1].
+        # Remove once mlx copies them instead.
+        if any(stride < 0 for stride in x.strides):
+            x = np.ascontiguousarray(x)
         return mx.array(x, dtype=mlx_dtype)
 
     if isinstance(x, list):
