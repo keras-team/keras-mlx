@@ -16,6 +16,14 @@ class Variable(KerasVariable):
     def __mlx_array__(self):
         return self.value
 
+    def __complex__(self):
+        # mlx tries complex() before __mlx_array__, making x * variable
+        # complex64. Remove once mlx checks __mlx_array__ first.
+        raise TypeError(
+            "A Keras Variable cannot be converted to a Python complex. "
+            "Use `ops.convert_to_numpy(variable)` to read its value."
+        )
+
     def __array__(self, dtype=None):
         value = convert_to_numpy(self.value)
         if dtype:
