@@ -12,6 +12,7 @@ from keras.src.backend.common.backend_utils import slice_along_axis
 from keras.src.backend.common.backend_utils import standardize_argnums
 from keras.src.backend.common.keras_tensor import KerasTensor
 from keras.src.backend.common.stateless_scope import StatelessScope
+from keras.src.backend.common.stateless_scope import get_stateless_scope
 from keras.src.backend.common.symbolic_scope import SymbolicScope
 
 try:
@@ -244,10 +245,30 @@ def cond(pred, true_fn, false_fn):
     # traced by `mx.compile` or `mx.vmap`. MLX has no primitive for
     # data-dependent control flow, so both branches are evaluated and their
     # outputs are selected with `mx.where` instead.
-    true_out = true_fn()
-    false_out = false_fn()
+    scope = get_stateless_scope()
+    if scope is None:
+        true_out = true_fn()
+        false_out = false_fn()
+    else:
+        # Branches can assign variables, so each runs on its own copy of the
+        # state and the assignments are selected like the outputs.
+        before = scope.state_mapping
+        scope.state_mapping = dict(before)
+        true_out = true_fn()
+        true_state = scope.state_mapping
+        scope.state_mapping = dict(before)
+        false_out = false_fn()
+        false_state = scope.state_mapping
+        scope.state_mapping = dict(before)
+        for key in true_state.keys() | false_state.keys():
+            t = true_state.get(key, before.get(key))
+            f = false_state.get(key, before.get(key))
+            scope.state_mapping[key] = t if t is f else mx.where(pred, t, f)
     return tree.map_structure(
-        lambda t, f: mx.where(pred, t, f), true_out, false_out
+        lambda t, f: mx.where(pred, t, f),
+        true_out,
+        false_out,
+        none_is_leaf=False,
     )
 
 
