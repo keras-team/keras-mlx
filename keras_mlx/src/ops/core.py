@@ -1,5 +1,6 @@
 import builtins
 import functools
+import warnings
 
 import ml_dtypes
 import mlx.core as mx
@@ -676,15 +677,13 @@ class custom_gradient:
 
 
 def remat(f):
-    """Implementation of rematerialization.
-
-    Args:
-        f: The function or operation to rematerialize.
-    Returns:
-        A function wrapping f that defines a custom gradient, which
-        recomputes f on the backwards pass of a gradient call.
-    """
-    return mx.checkpoint(f)
+    # mx.checkpoint drops the grads of weights f closes over.
+    warnings.warn(
+        "Rematerialization memory optimization is not supported by the "
+        "MLX backend. Please switch to JAX, TensorFlow, or PyTorch to "
+        "utilize this feature."
+    )
+    return f
 
 
 def grad(f, argnums=0):

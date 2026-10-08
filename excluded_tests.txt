@@ -1,6 +1,5 @@
 # Tests that are known not to pass with the mlx backend.
 # Each line is one full pytest node id, matched exactly.
-keras/src/backend/common/remat_test.py::RematTest::test_remat_with_kwargs
 keras/src/backend/common/variables_test.py::VariablePropertiesTest::test_standardize_dtype_complex128
 keras/src/backend/common/variables_test.py::VariablePropertiesTest::test_standardize_dtype_float8_e4m3fn
 keras/src/backend/common/variables_test.py::VariablePropertiesTest::test_standardize_dtype_float8_e5m2
