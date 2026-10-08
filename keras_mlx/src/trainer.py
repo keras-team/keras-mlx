@@ -16,6 +16,16 @@ from keras.src.utils import traceback_utils
 from keras.src.utils.python_utils import pythonify_logs
 from keras_mlx.src.ops.core import convert_to_numpy
 from keras_mlx.src.ops.core import convert_to_tensor
+from keras_mlx.src.random import tracing_compiled_step
+
+
+def _with_tracing_flag(step):
+    # Runs while mx.compile traces the step.
+    def traced_step(*args):
+        with tracing_compiled_step():
+            return step(*args)
+
+    return traced_step
 
 
 class _State:
@@ -400,7 +410,7 @@ class Trainer(BaseTrainer):
         if self.train_function is not None and not force:
             return
         if not self.run_eagerly and self.jit_compile:
-            train_step = mx.compile(self.train_step)
+            train_step = mx.compile(_with_tracing_flag(self.train_step))
         else:
             train_step = self.train_step
 
@@ -412,7 +422,7 @@ class Trainer(BaseTrainer):
         if self.test_function is not None and not force:
             return
         if not self.run_eagerly and self.jit_compile:
-            test_step = mx.compile(self.test_step)
+            test_step = mx.compile(_with_tracing_flag(self.test_step))
         else:
             test_step = self.test_step
 
@@ -425,7 +435,7 @@ class Trainer(BaseTrainer):
             return
 
         if not self.run_eagerly and self.jit_compile:
-            predict_step = mx.compile(self.predict_step)
+            predict_step = mx.compile(_with_tracing_flag(self.predict_step))
         else:
             predict_step = self.predict_step
 
