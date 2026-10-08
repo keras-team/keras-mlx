@@ -9,10 +9,17 @@ keras/src/layers/core/dense_test.py::DenseTest::test_quantize_dtype_argument_flo
 keras/src/layers/core/dense_test.py::DenseTest::test_quantize_float8
 keras/src/layers/core/dense_test.py::DenseTest::test_quantize_float8_fitting
 keras/src/layers/core/dense_test.py::DenseTest::test_quantize_float8_inference
+keras/src/layers/core/dense_test.py::DenseTest::test_quantize_float8_rebuilt_model_takes_weights
+keras/src/layers/core/dense_test.py::DenseTest::test_quantize_float8_trained_model_reloads_optimizer_state
+keras/src/layers/core/dense_test.py::DenseTest::test_quantize_float8_weights_order_bias
+keras/src/layers/core/dense_test.py::DenseTest::test_quantize_float8_weights_order_no_bias
 keras/src/layers/core/einsum_dense_test.py::EinsumDenseTest::test_quantize_dtype_argument_float8
 keras/src/layers/core/einsum_dense_test.py::EinsumDenseTest::test_quantize_float8
 keras/src/layers/core/einsum_dense_test.py::EinsumDenseTest::test_quantize_float8_fitting
 keras/src/layers/core/einsum_dense_test.py::EinsumDenseTest::test_quantize_float8_inference
+keras/src/layers/core/einsum_dense_test.py::EinsumDenseTest::test_quantize_float8_weights_order_ab_bc_ac
+keras/src/layers/core/einsum_dense_test.py::EinsumDenseTest::test_quantize_float8_weights_order_btd_dnh_btnh
+keras/src/layers/core/einsum_dense_test.py::EinsumDenseTest::test_quantize_float8_weights_order_btd_dnh_btnh_no_bias
 keras/src/layers/core/einsum_dense_test.py::EinsumDenseTest::test_quantized_forward_matches_dense_float8
 keras/src/layers/layer_test.py::LayerTest::test_quantized_layer_with_remat
 # Fails under compile until pluggable_backend has keras-team/keras#23568.
@@ -25,6 +32,16 @@ keras/src/models/model_test.py::ModelTest::test_functional_optional_inputs_optio
 keras/src/models/model_test.py::ModelTest::test_quantize_float8
 keras/src/ops/core_test.py::CoreOpsCorrectnessTest::test_cast_float8_float8_e4m3fn
 keras/src/ops/core_test.py::CoreOpsCorrectnessTest::test_cast_float8_float8_e5m2
+keras/src/ops/image_test.py::ImageOpsCorrectnessTest::test_resize_dtype_bicubic_false_float64
+keras/src/ops/image_test.py::ImageOpsCorrectnessTest::test_resize_dtype_bicubic_true_float64
+keras/src/ops/image_test.py::ImageOpsCorrectnessTest::test_resize_dtype_bilinear_false_float64
+keras/src/ops/image_test.py::ImageOpsCorrectnessTest::test_resize_dtype_bilinear_true_float64
+keras/src/ops/image_test.py::ImageOpsCorrectnessTest::test_resize_dtype_lanczos3_false_float64
+keras/src/ops/image_test.py::ImageOpsCorrectnessTest::test_resize_dtype_lanczos3_true_float64
+keras/src/ops/image_test.py::ImageOpsCorrectnessTest::test_resize_dtype_lanczos5_false_float64
+keras/src/ops/image_test.py::ImageOpsCorrectnessTest::test_resize_dtype_lanczos5_true_float64
+keras/src/ops/image_test.py::ImageOpsCorrectnessTest::test_resize_dtype_nearest_false_float64
+keras/src/ops/image_test.py::ImageOpsCorrectnessTest::test_resize_dtype_nearest_true_float64
 keras/src/ops/image_test.py::ImageOpsCorrectnessTest::test_resize_with_pad_1.0
 keras/src/ops/image_test.py::ImageOpsCorrectnessTest::test_resize_with_pad_2.0
 keras/src/ops/math_test.py::MathOpsCorrectnessTest::test_istft0
