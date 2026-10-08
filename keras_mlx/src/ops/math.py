@@ -316,7 +316,8 @@ def _reflect_pad(x, pad_width, axis=-1):
     left_pad, right_pad = pad_width
 
     if left_pad > 0:
-        indices = mx.arange(1, left_pad + 1, dtype=mx.int32)[::-1]
+        # A reversed arange view breaks the gather grad on Metal.
+        indices = mx.arange(left_pad, 0, -1, dtype=mx.int32)
         prefix = mx.take(x, indices, axis=axis)
     else:
         prefix = None
