@@ -261,7 +261,8 @@ _SCATTER_UNSUPPORTED_GPU_DTYPES = (mx.int64, mx.uint64, mx.complex64)
 
 
 def scatter(indices, values, shape):
-    indices = convert_to_tensor(indices)
+    # mlx raises on grads through scatter indices, which carry none.
+    indices = mx.stop_gradient(convert_to_tensor(indices))
     values = convert_to_tensor(values)
     zeros = mx.zeros(shape, dtype=values.dtype)
     indices = tuple(indices[..., i] for i in range(indices.shape[-1]))
@@ -278,7 +279,7 @@ def scatter(indices, values, shape):
 
 def scatter_update(inputs, indices, updates, reduction=None):
     inputs = convert_to_tensor(inputs)
-    indices = convert_to_tensor(indices)
+    indices = mx.stop_gradient(convert_to_tensor(indices))
     updates = convert_to_tensor(updates)
     indices = tuple(indices[..., i] for i in range(indices.shape[-1]))
     stream = (
@@ -533,6 +534,15 @@ def dilate(x, axis, dilation_rate):
     return result
 
 
+def _strided_slice_along_axis(x, start, stop, step, axis):
+    # mlx spreads the grad of a one element strided slice over the range.
+    # Remove once the mlx strided slice vjp is fixed.
+    indices = range(x.shape[axis])[start:stop:step]
+    if len(indices) == 1:
+        start, stop, step = indices[0], indices[0] + 1, 1
+    return slice_along_axis(x, start, stop, step=step, axis=axis)
+
+
 def associative_scan(f, elems, reverse=False, axis=0):
     # Ref: jax.lax.associative_scan
     if not callable(f):
@@ -591,12 +601,9 @@ def associative_scan(f, elems, reverse=False, axis=0):
             return elems
 
         reduced_elems = _combine(
+            [_strided_slice_along_axis(elem, 0, -1, 2, axis) for elem in elems],
             [
-                slice_along_axis(elem, 0, -1, step=2, axis=axis)
-                for elem in elems
-            ],
-            [
-                slice_along_axis(elem, 1, None, step=2, axis=axis)
+                _strided_slice_along_axis(elem, 1, None, 2, axis)
                 for elem in elems
             ],
         )
@@ -605,18 +612,12 @@ def associative_scan(f, elems, reverse=False, axis=0):
         if num_elems % 2 == 0:
             even_elems = _combine(
                 [slice_along_axis(e, 0, -1, axis=axis) for e in odd_elems],
-                [
-                    slice_along_axis(e, 2, None, step=2, axis=axis)
-                    for e in elems
-                ],
+                [_strided_slice_along_axis(e, 2, None, 2, axis) for e in elems],
             )
         else:
             even_elems = _combine(
                 odd_elems,
-                [
-                    slice_along_axis(e, 2, None, step=2, axis=axis)
-                    for e in elems
-                ],
+                [_strided_slice_along_axis(e, 2, None, 2, axis) for e in elems],
             )
 
         even_elems = [
