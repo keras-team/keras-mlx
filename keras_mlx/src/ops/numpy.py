@@ -2296,17 +2296,19 @@ def hypot(x1, x2):
     elif dtype == "int64":
         dtype = "float64"
     mlx_dtype = _mlx_result_dtype(dtype)
-    a = mx.abs(x1.astype(mlx_dtype))
-    b = mx.abs(x2.astype(mlx_dtype))
-    # Factor out the larger magnitude so the square cannot overflow.
-    larger = mx.maximum(a, b)
-    smaller = mx.minimum(a, b)
-    larger_safe = mx.where(larger == 0, 1, larger)
-    ratio = smaller / larger_safe
-    result = larger * mx.sqrt(1 + ratio * ratio)
+    x1 = x1.astype(mlx_dtype)
+    x2 = x2.astype(mlx_dtype)
+    larger = mx.maximum(mx.abs(x1), mx.abs(x2))
+    both_zero = larger == 0
+    # Factor out the larger magnitude so the squares cannot overflow. Keeping
+    # it out of the gradient leaves ties and zero inputs with the right grads.
+    scale = mx.stop_gradient(mx.where(both_zero, 1, larger))
+    sum_sq = mx.square(x1 / scale) + mx.square(x2 / scale)
+    result = scale * mx.sqrt(mx.where(both_zero, 1, sum_sq))
+    result = mx.where(both_zero, 0, result)
     # IEEE hypot is inf whenever either input is infinite, even if the
     # other one is nan.
-    return mx.where(mx.isinf(a) | mx.isinf(b), mx.inf, result)
+    return mx.where(mx.isinf(x1) | mx.isinf(x2), mx.inf, result)
 
 
 def _i0_float32(abs_x):
