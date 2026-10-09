@@ -868,6 +868,73 @@ def batch_normalization(
     return mx.add(x * inv, res)
 
 
+def _canonical_axes(x, axis):
+    if isinstance(axis, int):
+        axis = [axis]
+    return sorted(canonicalize_axis(a, x.ndim) for a in axis)
+
+
+def _normalization_operands(x, weights, axis):
+    # The mlx kernels normalize the last axis with 1-D weights, so the axes
+    # are moved to the end and flattened. None means a weight does not match.
+    size = math.prod(x.shape[a] for a in axis)
+    flat_weights = []
+    for weight in weights:
+        if weight is None:
+            flat_weights.append(None)
+        elif weight.size == size:
+            flat_weights.append(mx.reshape(weight, (size,)))
+        else:
+            return None
+    kept = [d for d in range(x.ndim) if d not in axis]
+    perm = kept + list(axis)
+    x = mx.transpose(x, perm)
+    flat_x = mx.reshape(x, x.shape[: len(kept)] + (size,))
+    return flat_x, flat_weights, x.shape, perm
+
+
+def _restore_normalization_output(outputs, shape, perm):
+    outputs = mx.reshape(outputs, shape)
+    return mx.transpose(outputs, [perm.index(d) for d in range(len(perm))])
+
+
+def rms_normalization(x, scale=None, axis=-1, epsilon=None):
+    if x.ndim == 0:
+        # A scalar is normalized as a single element, like the composed op.
+        x = mx.expand_dims(x, 0)
+    axis = _canonical_axes(x, axis)
+    operands = _normalization_operands(x, (scale,), axis) if axis else None
+    if operands is None:
+        rrms = mx.rsqrt(
+            mx.mean(mx.square(x), axis=axis, keepdims=True) + epsilon
+        )
+        outputs = x * rrms
+        if scale is not None:
+            outputs = outputs * scale
+        return outputs
+    flat_x, (scale,), shape, perm = operands
+    outputs = mx.fast.rms_norm(flat_x, scale, epsilon)
+    return _restore_normalization_output(outputs, shape, perm)
+
+
+def layer_normalization(x, gamma=None, beta=None, axis=-1, epsilon=None):
+    axis = _canonical_axes(x, axis)
+    operands = _normalization_operands(x, (gamma, beta), axis) if axis else None
+    if operands is None:
+        mean = mx.mean(x, axis=axis, keepdims=True)
+        variance = mx.var(x, axis=axis, keepdims=True)
+        inv = mx.rsqrt(variance + epsilon)
+        if gamma is not None:
+            inv = inv * gamma
+        res = -mean * inv
+        if beta is not None:
+            res = res + beta
+        return x * inv + res
+    flat_x, (gamma, beta), shape, perm = operands
+    outputs = mx.fast.layer_norm(flat_x, gamma, beta, epsilon)
+    return _restore_normalization_output(outputs, shape, perm)
+
+
 def ctc_loss(target, output, target_length, output_length, mask_index=0):
     # Ref: https://github.com/google-deepmind/optax
     # optax.ctc_loss_with_forward_probs
