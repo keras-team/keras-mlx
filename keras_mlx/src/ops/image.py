@@ -195,6 +195,18 @@ def _linear_indices_and_weights(coordinate):
     return [(index, lower_weight), (index + 1, upper_weight)]
 
 
+_INTERP_FUNS = {
+    0: _nearest_indices_and_weights,
+    1: _linear_indices_and_weights,
+}
+
+
+def _cast_to_input_dtype(result, input_arr):
+    if _is_integer(input_arr) and not _is_integer(result):
+        result = _round_half_away_from_zero(result)
+    return result.astype(input_arr.dtype)
+
+
 def map_coordinates(
     inputs, coordinates, order, fill_mode="constant", fill_value=0.0
 ):
@@ -227,11 +239,8 @@ def map_coordinates(
             f"{set(_INDEX_FIXERS.keys())}. Received: fill_mode={fill_mode}"
         )
 
-    if order == 0:
-        interp_fun = _nearest_indices_and_weights
-    elif order == 1:
-        interp_fun = _linear_indices_and_weights
-    else:
+    interp_fun = _INTERP_FUNS.get(order)
+    if interp_fun is None:
         raise NotImplementedError("map_coordinates currently requires order<=1")
 
     if fill_mode == "constant":
@@ -265,13 +274,42 @@ def map_coordinates(
             contribution = mx.where(all_valid, input_arr[indices], fill_value)
         outputs.append(functools.reduce(operator.mul, weights) * contribution)
     result = functools.reduce(operator.add, outputs)
-    if _is_integer(input_arr):
-        result = (
-            result
-            if _is_integer(result)
-            else _round_half_away_from_zero(result)
-        )
-    return result.astype(input_arr.dtype)
+    return _cast_to_input_dtype(result, input_arr)
+
+
+def _map_coordinates_batched(images, rows, cols, order, fill_mode, fill_value):
+    # Only rows and cols are interpolated, the channel coordinate of an affine
+    # transform is always the identity.
+    batch, height, width, channels = images.shape
+    # A flat index gathers faster than four index arrays, past 2**31
+    # elements it needs int64.
+    index_dtype = mx.int64 if images.size >= 2**31 else mx.int32
+    flat_images = images.reshape(-1)
+    image_offsets = mx.arange(batch, dtype=index_dtype) * height * width
+    image_offsets = image_offsets.reshape(-1, 1, 1, 1)
+    channel_index = mx.arange(channels, dtype=index_dtype)
+    index_fixer = _INDEX_FIXERS[fill_mode]
+    interp_fun = _INTERP_FUNS[order]
+    if isinstance(fill_value, (int, float)) and _is_integer(images):
+        fill_value = int(fill_value)
+
+    outputs = []
+    for row, row_weight in interp_fun(rows):
+        for col, col_weight in interp_fun(cols):
+            pixel = (
+                image_offsets
+                + index_fixer(row, height).astype(index_dtype) * width
+                + index_fixer(col, width)
+            )
+            contribution = mx.take(
+                flat_images, pixel * channels + channel_index
+            )
+            if fill_mode == "constant":
+                valid = (row >= 0) & (row < height) & (col >= 0) & (col < width)
+                contribution = mx.where(valid, contribution, fill_value)
+            outputs.append(row_weight * col_weight * contribution)
+    result = functools.reduce(operator.add, outputs)
+    return _cast_to_input_dtype(result, images)
 
 
 AFFINE_TRANSFORM_INTERPOLATIONS = {  # map to order
@@ -374,17 +412,13 @@ def affine_transform(
     coordinates = mx.moveaxis(coordinates, source=-1, destination=1)
     coordinates += offset.reshape((*offset.shape, 1, 1, 1))
 
-    affined = mx.stack(
-        [
-            map_coordinates(
-                images[i],
-                coordinates[i],
-                order=AFFINE_TRANSFORM_INTERPOLATIONS[interpolation],
-                fill_mode=fill_mode,
-                fill_value=fill_value,
-            )
-            for i in range(len(images))
-        ],
+    affined = _map_coordinates_batched(
+        images,
+        coordinates[:, 0],
+        coordinates[:, 1],
+        order=AFFINE_TRANSFORM_INTERPOLATIONS[interpolation],
+        fill_mode=fill_mode,
+        fill_value=fill_value,
     )
 
     if data_format == "channels_first":
