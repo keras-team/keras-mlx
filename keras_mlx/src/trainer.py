@@ -1,3 +1,4 @@
+import itertools
 import warnings
 
 import mlx.core as mx
@@ -961,9 +962,22 @@ class Trainer(BaseTrainer):
 
 class MLXEpochIterator(EpochIterator):
     def __next__(self):
-        begin_step, end_step, buffer = super().__next__()
-        buffer = tree.map_structure(convert_to_tensor, buffer)
-        return begin_step, end_step, buffer
+        begin_step, end_step, iterator = next(self._epoch_iterator)
+        with self.catch_stop_iteration():
+            buffer = next(iterator)
+            return (
+                begin_step,
+                end_step,
+                tree.map_structure(convert_to_tensor, buffer),
+            )
+        raise StopIteration
 
     def _get_iterator(self):
-        return self.data_adapter.get_native_iterator()
+        # Yield whole chunks so only an exhausted iterator ends the epoch, the
+        # base __next__ also ends it on a short last chunk.
+        iterator = iter(self.data_adapter.get_native_iterator())
+        while True:
+            buffer = list(itertools.islice(iterator, self.steps_per_execution))
+            if not buffer:
+                return
+            yield buffer
