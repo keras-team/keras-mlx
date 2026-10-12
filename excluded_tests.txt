@@ -53,6 +53,7 @@ keras/src/ops/numpy_test.py::NumpyOneInputOpsCorrectnessTest::test_argpartition
 keras/src/ops/numpy_test.py::NumpyOneInputOpsDynamicShapeTest::test_argmax_negative_zero
 keras/src/ops/numpy_test.py::NumpyOneInputOpsDynamicShapeTest::test_argmin_negative_zero
 keras/src/quantizers/float8_scaling_test.py::Float8ScalingTest::test_quantize_and_dequantize
+keras/src/quantizers/strategy_registry_test.py::ProjectionOnlyModeTest::test_model_quantize_skips_listing_lookup_layer
 keras/src/saving/saving_api_test.py::LoadModelTests::test_basic_load_float64
 keras/src/saving/saving_api_test.py::LoadWeightsTests::test_load_weights_h5_float16_float64
 keras/src/saving/saving_api_test.py::LoadWeightsTests::test_load_weights_h5_float32_float64
