@@ -7,6 +7,7 @@ import mlx.core as mx
 import mlx.nn as nn
 
 from keras.src.backend import result_type
+from keras.src.backend.common import dtypes
 from keras.src.backend.common import standardize_dtype
 from keras.src.backend.common.backend_utils import (
     _convert_conv_transpose_padding_args_from_keras_to_jax,
@@ -184,9 +185,9 @@ def leaky_relu(x, negative_slope=0.2):
 def hard_sigmoid(x):
     x = convert_to_tensor(x)
     # mlx promotes ints on its own, but to float32 rather than floatx.
-    dtype = standardize_dtype(x.dtype)
-    if "int" in dtype or dtype == "bool":
-        x = cast(x, floatx())
+    float_dtype = dtypes.promote_to_float_dtype(x.dtype)
+    if float_dtype != standardize_dtype(x.dtype):
+        x = cast(x, float_dtype)
     return mx.maximum(0, mx.minimum(1, x / 6 + 0.5))
 
 
