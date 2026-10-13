@@ -4,6 +4,7 @@ keras/src/backend/common/variables_test.py::VariablePropertiesTest::test_standar
 keras/src/backend/common/variables_test.py::VariablePropertiesTest::test_standardize_dtype_float8_e4m3fn
 keras/src/backend/common/variables_test.py::VariablePropertiesTest::test_standardize_dtype_float8_e5m2
 keras/src/callbacks/tensorboard_test.py::TestTensorBoardV2::test_TensorBoard_non_blocking
+keras/src/layers/core/dense_test.py::DenseTest::test_float8_reads_its_dtype_policy_map_entry
 keras/src/layers/core/dense_test.py::DenseTest::test_quantize_dtype_argument_float8
 keras/src/layers/core/dense_test.py::DenseTest::test_quantize_float8
 keras/src/layers/core/dense_test.py::DenseTest::test_quantize_float8_fitting

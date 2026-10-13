@@ -7,6 +7,7 @@ import mlx.core as mx
 import mlx.nn as nn
 
 from keras.src.backend import result_type
+from keras.src.backend.common import dtypes
 from keras.src.backend.common import standardize_dtype
 from keras.src.backend.common.backend_utils import (
     _convert_conv_transpose_padding_args_from_keras_to_jax,
@@ -114,6 +115,10 @@ def sigmoid(x):
 
 def sparse_sigmoid(x):
     x = convert_to_tensor(x)
+    # Ints can't hold the 0.5 midpoint or, if unsigned, the -1 bound.
+    float_dtype = dtypes.promote_to_float_dtype(x.dtype)
+    if float_dtype != standardize_dtype(x.dtype):
+        x = cast(x, float_dtype)
     return mx.where(x <= -1, 0, mx.where(x >= 1, 1, 0.5 * (x + 1)))
 
 
