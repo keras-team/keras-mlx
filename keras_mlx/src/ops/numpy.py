@@ -968,12 +968,18 @@ def moveaxis(x, source, destination):
     if not isinstance(destination, (list, tuple)):
         destination = [destination]
 
-    source = [axis if axis >= 0 else x.ndim + axis for axis in source]
-    destination = [axis if axis >= 0 else x.ndim + axis for axis in destination]
+    _source = [canonicalize_axis(axis, x.ndim) for axis in source]
+    _destination = [canonicalize_axis(axis, x.ndim) for axis in destination]
+    if len(_source) != len(_destination):
+        raise ValueError(
+            "Inconsistent number of `source` and `destination`. "
+            f"Received: source={source}, destination={destination}"
+        )
 
-    perm = [i for i in range(x.ndim)]
-    for s, d in zip(source, destination):
-        perm.remove(s)
+    # Insert in ascending destination order so each index is final when
+    # inserted.
+    perm = [i for i in range(x.ndim) if i not in _source]
+    for d, s in sorted(zip(_destination, _source)):
         perm.insert(d, s)
 
     return mx.transpose(x, perm)
