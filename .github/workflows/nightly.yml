@@ -1,0 +1,100 @@
+name: Nightly
+
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    if: github.repository == 'keras-team/keras-mlx'
+    uses: ./.github/workflows/actions.yml # zizmor: ignore[self-repository]
+
+  report:
+    name: Report failure
+    needs: [tests]
+    if: >-
+      !cancelled() &&
+      github.repository == 'keras-team/keras-mlx' &&
+      needs.tests.result != 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+
+    steps:
+      - name: Open or update the tracking issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RESULT: ${{ needs.tests.result }}
+          LINUX_SHA: ${{ needs.tests.outputs.linux-keras-sha }}
+          MACOS_SHA: ${{ needs.tests.outputs.macos-keras-sha }}
+          LINUX_FAILED: ${{ needs.tests.outputs.linux-failed-tests }}
+          MACOS_FAILED: ${{ needs.tests.outputs.macos-failed-tests }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ "$RESULT" = "cancelled" ]; then
+            status="timed out or was cancelled"
+          else
+            status="failed"
+          fi
+          commit_url() {
+            if [ -n "$1" ]; then
+              echo "https://github.com/keras-team/keras/commit/$1"
+            else
+              echo "unknown"
+            fi
+          }
+          # Each job checks out master on its own, so they can differ.
+          if [ "$LINUX_SHA" = "$MACOS_SHA" ]; then
+            keras="Keras commit: $(commit_url "$LINUX_SHA")"
+          else
+            keras="Keras commit: linux $(commit_url "$LINUX_SHA"), macos $(commit_url "$MACOS_SHA")"
+          fi
+          failed_tests=$(
+            if [ -n "$LINUX_FAILED" ]; then printf '%s\n' "$LINUX_FAILED" | sed 's/^/linux /'; fi
+            if [ -n "$MACOS_FAILED" ]; then printf '%s\n' "$MACOS_FAILED" | sed 's/^/macos /'; fi
+          )
+          {
+            echo "Run: $RUN_URL"
+            echo "$keras"
+            echo
+            if [ -n "$failed_tests" ]; then
+              echo "Failing tests:"
+              echo '```'
+              echo "$failed_tests"
+              echo '```'
+            else
+              echo "No test summary: the run failed before the tests ran, or timed out. See the run log."
+            fi
+          } > details.md
+
+          gh label create ci-nightly --color B60205 \
+            --description "Nightly CI against Keras master is failing" --force
+          issue=$(gh issue list --label ci-nightly --state open \
+            --json number --jq '.[0].number')
+          if [ -n "$issue" ]; then
+            last=$(gh issue view "$issue" --json body,comments --jq \
+              '[.body] + [.comments[] | select(.author.login == "github-actions") | .body] | last')
+            previous=$(printf '%s\n' "$last" | sed -n '/^```$/,/^```$/p' | sed '1d;$d')
+            if [ -n "$failed_tests" ] && [ "$previous" = "$failed_tests" ]; then
+              echo "Same failing tests as the last report, not commenting."
+              exit 0
+            fi
+            { echo "The nightly run $status again."; echo; cat details.md; } > comment.md
+            gh issue comment "$issue" --body-file comment.md
+          else
+            {
+              echo "The nightly run against Keras master $status."
+              echo
+              cat details.md
+              echo
+              echo "Reference this issue with \`Fixes #<number>\` in the PR that fixes it."
+            } > issue.md
+            gh issue create --label ci-nightly \
+              --title "Nightly CI against Keras master is failing" \
+              --body-file issue.md
+          fi

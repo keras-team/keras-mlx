@@ -6,6 +6,16 @@ on:
   pull_request:
   release:
     types: [created]
+  workflow_call:
+    outputs:
+      linux-keras-sha:
+        value: ${{ jobs.run_linux_tests.outputs.keras-sha }}
+      macos-keras-sha:
+        value: ${{ jobs.run_macos_tests.outputs.keras-sha }}
+      linux-failed-tests:
+        value: ${{ jobs.run_linux_tests.outputs.failed-tests }}
+      macos-failed-tests:
+        value: ${{ jobs.run_macos_tests.outputs.failed-tests }}
 
 permissions:
   contents: read
@@ -26,6 +36,9 @@ jobs:
     container:
       image: python:3.11-slim
     timeout-minutes: 120
+    outputs:
+      keras-sha: ${{ steps.keras.outputs.sha }}
+      failed-tests: ${{ steps.summary.outputs.failed }}
 
     env:
       KERAS_HOME: ../keras-mlx/.github/workflows/config
@@ -55,6 +68,10 @@ jobs:
           path: keras
           persist-credentials: false
 
+      - name: Record keras commit
+        id: keras
+        run: echo "sha=$(git -C keras rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
       - name: Install Python dependencies
         run: |
           pip install -r keras/requirements-common.txt
@@ -78,7 +95,9 @@ jobs:
         # Splitting across workers keeps each process small and means a worker
         # that dies no longer takes the whole run with it. loadfile groups the
         # tests by file, which is how keras itself runs them.
-        run: pytest keras -n auto --dist loadfile --ignore keras/src/applications --ignore keras/src/wrappers
+        run: |
+          set -o pipefail
+          pytest keras -n auto --dist loadfile --ignore keras/src/applications --ignore keras/src/wrappers | tee "$RUNNER_TEMP/pytest.log"
 
       - name: Run the sklearn wrapper tests
         working-directory: ./keras
@@ -97,12 +116,28 @@ jobs:
           # A script gets its own folder on sys.path, not the cwd.
           PYTHONPATH=. python integration_tests/numerical_test.py
 
+      - name: Collect failed tests
+        id: summary
+        if: always()
+        run: |
+          failed=$(grep -E '^(FAILED|ERROR) ' "$RUNNER_TEMP/pytest.log" 2>/dev/null | sed -E 's/ - .*$//' || true)
+          count=$(printf '%s' "$failed" | grep -c . || true)
+          {
+            echo "failed<<EOF_FAILED"
+            printf '%s\n' "$failed" | head -n 30
+            if [ "$count" -gt 30 ]; then echo "... and $((count - 30)) more"; fi
+            echo "EOF_FAILED"
+          } >> "$GITHUB_OUTPUT"
+
   run_macos_tests:
     # macos-latest is Apple silicon, so this is the only leg that runs Metal.
     # It has no container, GitHub hosted macOS runners cannot run one.
     name: Run tests on macos
     runs-on: macos-latest
     timeout-minutes: 120
+    outputs:
+      keras-sha: ${{ steps.keras.outputs.sha }}
+      failed-tests: ${{ steps.summary.outputs.failed }}
 
     env:
       KERAS_HOME: ../keras-mlx/.github/workflows/config
@@ -127,6 +162,10 @@ jobs:
           path: keras
           persist-credentials: false
 
+      - name: Record keras commit
+        id: keras
+        run: echo "sha=$(git -C keras rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
       - name: Install Python dependencies
         run: |
           pip install -r keras/requirements-common.txt
@@ -147,7 +186,9 @@ jobs:
 
       - name: Run Tests
         working-directory: ./keras
-        run: pytest keras --ignore keras/src/applications
+        run: |
+          set -o pipefail
+          pytest keras --ignore keras/src/applications | tee "$RUNNER_TEMP/pytest.log"
 
       - name: Run the keras integration tests
         working-directory: ./keras
@@ -158,6 +199,19 @@ jobs:
           python -m pytest integration_tests/import_test.py
           # A script gets its own folder on sys.path, not the cwd.
           PYTHONPATH=. python integration_tests/numerical_test.py
+
+      - name: Collect failed tests
+        id: summary
+        if: always()
+        run: |
+          failed=$(grep -E '^(FAILED|ERROR) ' "$RUNNER_TEMP/pytest.log" 2>/dev/null | sed -E 's/ - .*$//' || true)
+          count=$(printf '%s' "$failed" | grep -c . || true)
+          {
+            echo "failed<<EOF_FAILED"
+            printf '%s\n' "$failed" | head -n 30
+            if [ "$count" -gt 30 ]; then echo "... and $((count - 30)) more"; fi
+            echo "EOF_FAILED"
+          } >> "$GITHUB_OUTPUT"
 
   format:
     name: Check the code format
