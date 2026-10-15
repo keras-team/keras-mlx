@@ -2,7 +2,7 @@
 # comes from mlx-metal on macOS and mlx-cpu on Linux (the `cpu` extra,
 # which is platform-gated to Linux so macOS still gets Metal).
 # 0.32 builds its CPU JIT under gcc 13 and pads natively.
-mlx[cpu]>=0.32
+mlx[cpu]>=0.32.4
 
 # Tensorflow
 tensorflow-cpu;sys_platform != 'darwin'
