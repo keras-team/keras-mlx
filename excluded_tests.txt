@@ -22,6 +22,7 @@ keras/src/layers/core/einsum_dense_test.py::EinsumDenseTest::test_quantize_float
 keras/src/layers/core/einsum_dense_test.py::EinsumDenseTest::test_quantize_float8_weights_order_btd_dnh_btnh_no_bias
 keras/src/layers/core/einsum_dense_test.py::EinsumDenseTest::test_quantized_forward_matches_dense_float8
 keras/src/layers/layer_test.py::LayerTest::test_quantized_layer_with_remat
+keras/src/layers/layer_test.py::LoraLessQuantizationTest::test_float8_quantize_and_call
 # RandomCrop slices with array bounds, and mlx only takes ints there.
 keras/src/layers/preprocessing/image_preprocessing/random_crop_test.py::RandomCropTest::test_dict_input
 keras/src/layers/preprocessing/image_preprocessing/random_crop_test.py::RandomCropTest::test_random_crop
