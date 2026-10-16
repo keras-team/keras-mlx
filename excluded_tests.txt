@@ -22,6 +22,7 @@ keras/src/layers/core/einsum_dense_test.py::EinsumDenseTest::test_quantize_float
 keras/src/layers/core/einsum_dense_test.py::EinsumDenseTest::test_quantize_float8_weights_order_btd_dnh_btnh_no_bias
 keras/src/layers/core/einsum_dense_test.py::EinsumDenseTest::test_quantized_forward_matches_dense_float8
 keras/src/layers/layer_test.py::LayerTest::test_quantized_layer_with_remat
+keras/src/layers/layer_test.py::LoraLessQuantizationTest::test_float8_quantize_and_call
 # RandomCrop slices with array bounds, and mlx only takes ints there.
 keras/src/layers/preprocessing/image_preprocessing/random_crop_test.py::RandomCropTest::test_dict_input
 keras/src/layers/preprocessing/image_preprocessing/random_crop_test.py::RandomCropTest::test_random_crop
@@ -31,6 +32,9 @@ keras/src/models/model_test.py::ModelTest::test_functional_optional_inputs_optio
 keras/src/models/model_test.py::ModelTest::test_quantize_float8
 keras/src/ops/core_test.py::CoreOpsCorrectnessTest::test_cast_float8_float8_e4m3fn
 keras/src/ops/core_test.py::CoreOpsCorrectnessTest::test_cast_float8_float8_e5m2
+# mlx 0.32.4 on Metal misorders a reshape after transposing some 3D conv
+# outputs. Remove once an mlx release fixes the reshape contiguity flags.
+keras/src/ops/image_test.py::ImageOpsCorrectnessTest::test_reconstruct_patches_3d
 keras/src/ops/image_test.py::ImageOpsCorrectnessTest::test_resize_dtype_bicubic_false_float64
 keras/src/ops/image_test.py::ImageOpsCorrectnessTest::test_resize_dtype_bicubic_true_float64
 keras/src/ops/image_test.py::ImageOpsCorrectnessTest::test_resize_dtype_bilinear_false_float64

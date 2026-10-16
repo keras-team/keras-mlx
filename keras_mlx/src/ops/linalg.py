@@ -66,10 +66,14 @@ def lu_factor(a):
 
 
 def solve(a, b):
+    vector_rhs = b.ndim == a.ndim - 1
+    if vector_rhs:
+        b = mx.expand_dims(b, axis=-1)
     with mx.stream(mx.cpu):
         # [linalg::solve] This op is not yet supported on the GPU.
         # Explicitly pass a CPU stream to run it.
-        return mx.linalg.solve(a, b)
+        x = mx.linalg.solve(a, b)
+    return mx.squeeze(x, axis=-1) if vector_rhs else x
 
 
 def solve_triangular(a, b, lower=False):
