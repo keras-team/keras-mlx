@@ -1015,9 +1015,9 @@ def gaussian_blur(
             return kernel1d / mx.sum(kernel1d)
 
         def _get_gaussian_kernel2d(size, sigma):
-            kernel1d_x = _get_gaussian_kernel1d(size[0], sigma[0])
-            kernel1d_y = _get_gaussian_kernel1d(size[1], sigma[1])
-            return mx.outer(kernel1d_y, kernel1d_x)
+            kernel1d_height = _get_gaussian_kernel1d(size[0], sigma[0])
+            kernel1d_width = _get_gaussian_kernel1d(size[1], sigma[1])
+            return mx.outer(kernel1d_height, kernel1d_width)
 
         kernel2d = _get_gaussian_kernel2d(kernel_size, sigma)
 
