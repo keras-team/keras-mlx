@@ -6,8 +6,9 @@ from itertools import accumulate
 import mlx.core as mx
 import mlx.nn as nn
 
-from keras.src.backend import result_type
 from keras.src.backend.common import dtypes
+from keras.src.backend.common import is_float_dtype
+from keras.src.backend.common import result_type
 from keras.src.backend.common import standardize_dtype
 from keras.src.backend.common.backend_utils import (
     _convert_conv_transpose_padding_args_from_keras_to_jax,
@@ -16,7 +17,6 @@ from keras.src.backend.common.backend_utils import canonicalize_axis
 from keras.src.backend.common.backend_utils import (
     compute_adaptive_pooling_window_sizes,
 )
-from keras.src.backend.common.variables import is_float_dtype
 from keras.src.backend.config import epsilon
 from keras.src.backend.config import floatx
 from keras.src.backend.config import standardize_data_format

@@ -3,7 +3,7 @@ import math as python_math
 import mlx.core as mx
 import numpy as np
 
-from keras.src.backend.common import dtypes
+from keras.src.backend.common import result_type
 from keras.src.backend.common import standardize_dtype
 from keras.src.backend.common.backend_utils import canonicalize_axis
 from keras.src.utils.module_utils import scipy
@@ -101,7 +101,7 @@ def cdist(x, y):
 
 def erfc(x):
     x = convert_to_tensor(x)
-    dtype = dtypes.result_type(x.dtype, float)
+    dtype = result_type(x.dtype, float)
     # Chebyshev approximation from Numerical Recipes with fractional
     # error below 1.2e-7 everywhere, unlike 1 - erf(x), which loses all
     # precision in the tail.
@@ -682,7 +682,7 @@ def _upper_gamma_fraction(a, x):
 def gammainc(x1, x2):
     x1 = convert_to_tensor(x1)
     x2 = convert_to_tensor(x2)
-    dtype = dtypes.result_type(x1.dtype, x2.dtype, float)
+    dtype = result_type(x1.dtype, x2.dtype, float)
     # mlx has no incomplete gamma primitive. Both branches are evaluated for
     # every element because a traced graph cannot take only one of them, and
     # float32 holds the intermediate products either branch needs.

@@ -5,8 +5,8 @@ from copy import copy as builtin_copy
 import mlx.core as mx
 
 from keras.src.backend import config
-from keras.src.backend import result_type
 from keras.src.backend.common import dtypes
+from keras.src.backend.common import result_type
 from keras.src.backend.common import standardize_dtype
 from keras.src.backend.common.backend_utils import canonicalize_axis
 from keras.src.backend.common.backend_utils import normalize_shift_and_axis
@@ -446,7 +446,7 @@ def bincount(x, weights=None, minlength=0, sparse=False):
     if weights is not None:
         weights = convert_to_tensor(weights)
         dtypes_to_resolve.append(weights.dtype)
-        dtype = dtypes.result_type(*dtypes_to_resolve)
+        dtype = result_type(*dtypes_to_resolve)
     else:
         dtype = "int32"
     mlx_dtype = to_mlx_dtype(dtype)
@@ -472,7 +472,7 @@ def ceil(x):
     if standardize_dtype(x.dtype) == "int64":
         dtype = config.floatx()
     else:
-        dtype = dtypes.result_type(x.dtype, float)
+        dtype = result_type(x.dtype, float)
     mlx_dtype = to_mlx_dtype(dtype)
     x = x.astype(mlx_dtype)
     return mx.ceil(x)
@@ -515,7 +515,7 @@ def copy(x):
 def copysign(x1, x2):
     x1 = convert_to_tensor(x1)
     x2 = convert_to_tensor(x2)
-    dtype = _mlx_result_dtype(dtypes.result_type(x1.dtype, x2.dtype, float))
+    dtype = _mlx_result_dtype(result_type(x1.dtype, x2.dtype, float))
     x1 = x1.astype(dtype)
     x2 = x2.astype(dtype)
     return mx.where(signbit(x2), -mx.abs(x1), mx.abs(x1))
@@ -562,7 +562,7 @@ def cross(x1, x2, axisa=-1, axisb=-1, axisc=-1, axis=None):
 
 def cumprod(x, axis=None, dtype=None):
     x = convert_to_tensor(x)
-    dtype = dtypes.result_type(dtype or x.dtype)
+    dtype = result_type(dtype or x.dtype)
     if dtype == "bool":
         dtype = "int32"
     x = cast(x, dtype)
@@ -728,7 +728,7 @@ def floor(x):
     dtype = (
         config.floatx()
         if standardize_dtype(x.dtype) == "int64"
-        else dtypes.result_type(x.dtype, float)
+        else result_type(x.dtype, float)
     )
     x = cast(x, dtype)
     return mx.floor(x)
@@ -820,7 +820,7 @@ def linspace(
             getattr(stop, "dtype", type(stop)),
             float,
         ]
-        dtype = dtypes.result_type(*dtypes_to_resolve)
+        dtype = result_type(*dtypes_to_resolve)
     mlx_dtype = to_mlx_dtype(dtype)
 
     # mx.linspace takes Python scalars and a plain int for num.
@@ -913,7 +913,7 @@ def median(x, axis=None, keepdims=False):
     if isinstance(axis, list):
         axis = tuple(axis)
     x = convert_to_tensor(x)
-    result_dtype = dtypes.result_type(x.dtype, float)
+    result_dtype = result_type(x.dtype, float)
     x = x.astype(_mlx_result_dtype(result_dtype))
     return mx.median(x, axis=axis, keepdims=keepdims)
 
@@ -1110,7 +1110,7 @@ def pad(x, pad_width, mode="constant", constant_values=None):
 def prod(x, axis=None, keepdims=False, dtype=None):
     x = convert_to_tensor(x)
     if dtype is None:
-        dtype = _widen_reduce_int_dtype(dtypes.result_type(x.dtype))
+        dtype = _widen_reduce_int_dtype(result_type(x.dtype))
     mlx_dtype = to_mlx_dtype(dtype)
     output = mx.prod(x, axis=axis, keepdims=keepdims)
     return output.astype(mlx_dtype)
@@ -1124,7 +1124,7 @@ def _quantile_prep(x):
     if ori_dtype == "int64":
         dtype = config.floatx()
     else:
-        dtype = dtypes.result_type(x.dtype, float)
+        dtype = result_type(x.dtype, float)
     return x.astype(_mlx_result_dtype(dtype))
 
 
@@ -1464,7 +1464,7 @@ def trunc(x):
 def vdot(x1, x2):
     x1 = convert_to_tensor(x1)
     x2 = convert_to_tensor(x2)
-    dtype = dtypes.result_type(x1.dtype, x2.dtype)
+    dtype = result_type(x1.dtype, x2.dtype)
     result_dtype = to_mlx_dtype(dtype)
     x1_conj = mx.conj(mx.reshape(x1, (x1.size,)))
     result = mx.sum(x1_conj * mx.reshape(x2, (x2.size,)))
@@ -1499,7 +1499,7 @@ def where(condition, x1=None, x2=None):
         x1 = convert_to_tensor(x1)
     if not isinstance(x2, (int, float)):
         x2 = convert_to_tensor(x2)
-    dtype = dtypes.result_type(
+    dtype = result_type(
         getattr(x1, "dtype", type(x1)),
         getattr(x2, "dtype", type(x2)),
     )
@@ -1538,7 +1538,7 @@ def power(x1, x2):
 def float_power(x1, x2):
     x1 = convert_to_tensor(x1)
     x2 = convert_to_tensor(x2)
-    dtype = _mlx_result_dtype(dtypes.result_type(x1.dtype, x2.dtype, float))
+    dtype = _mlx_result_dtype(result_type(x1.dtype, x2.dtype, float))
     return mx.power(x1.astype(dtype), x2.astype(dtype))
 
 
@@ -1573,8 +1573,8 @@ def var(x, axis=None, keepdims=False):
     x = convert_to_tensor(x)
     # mlx computes the variance in the input dtype, which overflows in low
     # precision such as float16. Compute in float32 and cast back.
-    compute_dtype = dtypes.result_type(x.dtype, "float32")
-    result_dtype = dtypes.result_type(x.dtype, float)
+    compute_dtype = result_type(x.dtype, "float32")
+    result_dtype = result_type(x.dtype, float)
     result = mx.var(
         x.astype(to_mlx_dtype(compute_dtype)), axis=axis, keepdims=keepdims
     )
@@ -1608,7 +1608,7 @@ def floor_divide(x1, x2):
         x1 = convert_to_tensor(x1)
     if not isinstance(x2, (int, float)):
         x2 = convert_to_tensor(x2)
-    dtype = dtypes.result_type(
+    dtype = result_type(
         getattr(x1, "dtype", type(x1)), getattr(x2, "dtype", type(x2))
     )
     x1 = convert_to_tensor(x1, dtype=dtype)
@@ -1642,7 +1642,7 @@ def maybe_convert_to_tensor(x):
 def correlate(x1, x2, mode="valid"):
     x1 = convert_to_tensor(x1)
     x2 = convert_to_tensor(x2)
-    dtype = dtypes.result_type(x1.dtype, x2.dtype)
+    dtype = result_type(x1.dtype, x2.dtype)
     if dtype == "int64":
         dtype = "float64"
     elif dtype not in ["bfloat16", "float16", "float64"]:
@@ -1990,7 +1990,7 @@ def angle(x):
     if standardize_dtype(x.dtype) == "int64":
         dtype = config.floatx()
     else:
-        dtype = dtypes.result_type(x.dtype, float)
+        dtype = result_type(x.dtype, float)
     re = cast(re, dtype)
     im = cast(im, dtype)
     return mx.arctan2(im, re)
@@ -2113,7 +2113,7 @@ def _atleast_3d(x):
 def dstack(xs):
     xs = [convert_to_tensor(x) for x in xs]
     dtype = _mlx_result_dtype(
-        dtypes.result_type(*[standardize_dtype(x.dtype) for x in xs])
+        result_type(*[standardize_dtype(x.dtype) for x in xs])
     )
     xs = [_atleast_3d(x).astype(dtype) for x in xs]
     return mx.concatenate(xs, axis=2)
@@ -2144,7 +2144,7 @@ def flipud(x):
 
 
 def fmax(x1, x2):
-    dtype = dtypes.result_type(
+    dtype = result_type(
         getattr(x1, "dtype", type(x1)), getattr(x2, "dtype", type(x2))
     )
     x1 = convert_to_tensor(x1, dtype)
@@ -2157,7 +2157,7 @@ def fmax(x1, x2):
 
 
 def fmin(x1, x2):
-    dtype = dtypes.result_type(
+    dtype = result_type(
         getattr(x1, "dtype", type(x1)), getattr(x2, "dtype", type(x2))
     )
     x1 = convert_to_tensor(x1, dtype)
@@ -2172,7 +2172,7 @@ def fmin(x1, x2):
 def fmod(x1, x2):
     x1 = convert_to_tensor(x1)
     x2 = convert_to_tensor(x2)
-    dtype = dtypes.result_type(x1.dtype, x2.dtype)
+    dtype = result_type(x1.dtype, x2.dtype)
     if dtype == "bool":
         dtype = "int32"
     mlx_dtype = _mlx_result_dtype(dtype)
@@ -2187,7 +2187,7 @@ def _integer_result_dtype(op_name, x1, x2):
     # Returns the promoted dtype of two tensors, rejecting it when it is not
     # an integer type. op_name names the op the caller invoked, so the error
     # points at gcd or lcm rather than at a helper.
-    dtype = dtypes.result_type(x1.dtype, x2.dtype)
+    dtype = result_type(x1.dtype, x2.dtype)
     if standardize_dtype(dtype) not in dtypes.INT_TYPES:
         raise TypeError(
             f"{op_name} requires integer arguments. "
@@ -2269,7 +2269,7 @@ def hanning(x):
 def heaviside(x1, x2):
     x1 = convert_to_tensor(x1)
     x2 = convert_to_tensor(x2)
-    dtype = dtypes.result_type(x1.dtype, x2.dtype)
+    dtype = result_type(x1.dtype, x2.dtype)
     if dtype in ("int8", "int16", "int32", "uint8", "uint16", "uint32"):
         dtype = config.floatx()
     elif dtype == "int64":
@@ -2291,7 +2291,7 @@ def hsplit(x, indices_or_sections):
 def hypot(x1, x2):
     x1 = convert_to_tensor(x1)
     x2 = convert_to_tensor(x2)
-    dtype = dtypes.result_type(x1.dtype, x2.dtype)
+    dtype = result_type(x1.dtype, x2.dtype)
     if dtype in ("int8", "int16", "int32", "uint8", "uint16", "uint32"):
         dtype = config.floatx()
     elif dtype == "int64":
@@ -2359,9 +2359,7 @@ def i0(x):
     x = convert_to_tensor(x)
     sd = standardize_dtype(x.dtype)
     dtype = (
-        "float64"
-        if sd in ("int64", "float64")
-        else dtypes.result_type(x.dtype, float)
+        "float64" if sd in ("int64", "float64") else result_type(x.dtype, float)
     )
     result = _i0_float32(mx.abs(x.astype(mx.float32)))
     return result.astype(_mlx_result_dtype(dtype))
@@ -2371,7 +2369,7 @@ def isin(x1, x2, assume_unique=False, invert=False):
     # assume_unique is only a performance hint, the result is the same.
     x1 = convert_to_tensor(x1)
     x2 = convert_to_tensor(x2)
-    dtype = _mlx_result_dtype(dtypes.result_type(x1.dtype, x2.dtype))
+    dtype = _mlx_result_dtype(result_type(x1.dtype, x2.dtype))
     matches = mx.any(
         mx.expand_dims(x1.astype(dtype), -1) == x2.reshape(-1).astype(dtype),
         axis=-1,
@@ -2412,7 +2410,7 @@ def kaiser(x, beta):
 def kron(x1, x2):
     x1 = convert_to_tensor(x1)
     x2 = convert_to_tensor(x2)
-    dtype = _mlx_result_dtype(dtypes.result_type(x1.dtype, x2.dtype))
+    dtype = _mlx_result_dtype(result_type(x1.dtype, x2.dtype))
     return mx.kron(x1.astype(dtype), x2.astype(dtype))
 
 
@@ -2432,7 +2430,7 @@ def lcm(x1, x2):
 def ldexp(x1, x2):
     x1 = convert_to_tensor(x1)
     x2 = convert_to_tensor(x2)
-    dtype = dtypes.result_type(x1.dtype, x2.dtype, float)
+    dtype = result_type(x1.dtype, x2.dtype, float)
     if standardize_dtype(x2.dtype) not in dtypes.INT_TYPES:
         raise TypeError(
             "ldexp exponent must be an integer type. "
@@ -2455,7 +2453,7 @@ def ldexp(x1, x2):
 def logaddexp2(x1, x2):
     x1 = convert_to_tensor(x1)
     x2 = convert_to_tensor(x2)
-    dtype = dtypes.result_type(x1.dtype, x2.dtype, float)
+    dtype = result_type(x1.dtype, x2.dtype, float)
     mlx_dtype = _mlx_result_dtype(dtype)
     x1 = x1.astype(mlx_dtype)
     x2 = x2.astype(mlx_dtype)
@@ -2481,7 +2479,7 @@ def _nan_mask_fill(x, axis, keepdims, fill):
 
 def _nanvar_compute(x, axis, keepdims):
     # Masked two pass variance in the float32 compute dtype.
-    compute_dtype = dtypes.result_type(x.dtype, "float32")
+    compute_dtype = result_type(x.dtype, "float32")
     x = x.astype(_mlx_result_dtype(compute_dtype))
     axis = _np_axis(axis)
     nan_mask = mx.isnan(x)
@@ -2543,7 +2541,7 @@ def nanmax(x, axis=None, keepdims=False):
 
 def nanmean(x, axis=None, keepdims=False):
     x = convert_to_tensor(x)
-    dtype = dtypes.result_type(standardize_dtype(x.dtype), float)
+    dtype = result_type(standardize_dtype(x.dtype), float)
     mlx_dtype = _mlx_result_dtype(dtype)
     x = x.astype(mlx_dtype)
     axis = _np_axis(axis)
@@ -2580,7 +2578,7 @@ def nanpercentile(x, q, axis=None, method="linear", keepdims=False):
 
 def nanprod(x, axis=None, keepdims=False):
     x = convert_to_tensor(x)
-    dtype = _widen_reduce_int_dtype(dtypes.result_type(x.dtype))
+    dtype = _widen_reduce_int_dtype(result_type(x.dtype))
     if "float" in standardize_dtype(x.dtype):
         x = mx.where(mx.isnan(x), 1, x)
     return mx.prod(
@@ -2599,7 +2597,7 @@ def nanquantile(x, q, axis=None, method="linear", keepdims=False):
 
 def nanstd(x, axis=None, keepdims=False):
     x = convert_to_tensor(x)
-    result_dtype = dtypes.result_type(x.dtype, float)
+    result_dtype = result_type(x.dtype, float)
     # Take the square root in the compute dtype before the final cast.
     return mx.sqrt(_nanvar_compute(x, axis, keepdims)).astype(
         _mlx_result_dtype(result_dtype)
@@ -2620,7 +2618,7 @@ def nansum(x, axis=None, keepdims=False):
 
 def nanvar(x, axis=None, keepdims=False):
     x = convert_to_tensor(x)
-    result_dtype = dtypes.result_type(x.dtype, float)
+    result_dtype = result_type(x.dtype, float)
     return _nanvar_compute(x, axis, keepdims).astype(
         _mlx_result_dtype(result_dtype)
     )
@@ -2629,7 +2627,7 @@ def nanvar(x, axis=None, keepdims=False):
 def nextafter(x1, x2):
     x1 = convert_to_tensor(x1)
     x2 = convert_to_tensor(x2)
-    dtype = dtypes.result_type(x1.dtype, x2.dtype, float)
+    dtype = result_type(x1.dtype, x2.dtype, float)
     mlx_dtype = _mlx_result_dtype(dtype)
     x1 = x1.astype(mlx_dtype)
     x2 = x2.astype(mlx_dtype)
@@ -2688,7 +2686,7 @@ def sinc(x):
     if standardize_dtype(x.dtype) == "int64":
         dtype = config.floatx()
     else:
-        dtype = dtypes.result_type(x.dtype, float)
+        dtype = result_type(x.dtype, float)
     x = x.astype(_mlx_result_dtype(dtype))
     # Substitute a safe value at zero before dividing so that the zero
     # branch does not produce a nan gradient through the chain rule.
@@ -2699,7 +2697,7 @@ def sinc(x):
 
 def trapezoid(y, x=None, dx=1.0, axis=-1):
     y = convert_to_tensor(y)
-    result_dtype = dtypes.result_type(y.dtype, float)
+    result_dtype = result_type(y.dtype, float)
     mlx_dtype = _mlx_result_dtype(result_dtype)
     y = mx.moveaxis(y.astype(mlx_dtype), axis, -1)
     averages = (y[..., 1:] + y[..., :-1]) / 2
@@ -2800,8 +2798,8 @@ def unique(
 
 def vander(x, N=None, increasing=False):
     x = convert_to_tensor(x)
-    result_dtype = dtypes.result_type(x.dtype)
-    compute_dtype = dtypes.result_type(x.dtype, config.floatx())
+    result_dtype = result_type(x.dtype)
+    compute_dtype = result_type(x.dtype, config.floatx())
     x = x.astype(_mlx_result_dtype(compute_dtype))
     N = x.shape[0] if N is None else int(N)
     if increasing:
@@ -2831,7 +2829,7 @@ def cov(x):
             f"Received: x.shape={x.shape}"
         )
     dtype = standardize_dtype(x.dtype)
-    dtype = "float64" if dtype == "int64" else dtypes.result_type(dtype, float)
+    dtype = "float64" if dtype == "int64" else result_type(dtype, float)
     result_dtype = _mlx_result_dtype(dtype)
     if x.ndim == 0:
         return _nan_scalar(result_dtype)

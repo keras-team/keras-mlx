@@ -2,7 +2,7 @@ import mlx.core as mx
 import numpy as np
 
 from keras.src import tree
-from keras.src.backend.common import dtypes
+from keras.src.backend.common import result_type
 from keras.src.backend.common import standardize_dtype
 from keras_mlx.src.ops.core import convert_to_tensor
 
@@ -142,7 +142,7 @@ def cholesky(a, upper=False):
 def norm(x, ord=None, axis=None, keepdims=False):
     dtype = standardize_dtype(x.dtype)
     if "int" in dtype or dtype == "bool":
-        dtype = dtypes.result_type(x.dtype, "float32")
+        dtype = result_type(x.dtype, "float32")
     x = convert_to_tensor(x, dtype=dtype)
     # mlx linalg kernels do not support bfloat16, compute in float32.
     if x.dtype == mx.bfloat16:
