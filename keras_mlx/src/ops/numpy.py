@@ -1582,8 +1582,6 @@ def var(x, axis=None, keepdims=False):
 
 
 def sum(x, axis=None, keepdims=False):
-    if isinstance(x, (list, tuple)):
-        x = stack(x)
     x = convert_to_tensor(x)
     return mx.sum(x, axis=axis, keepdims=keepdims)
 
