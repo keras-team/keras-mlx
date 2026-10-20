@@ -92,7 +92,12 @@ def convert_to_tensor(x, dtype=None, sparse=None, ragged=None):
         # Remove once mlx copies them instead.
         if any(stride < 0 for stride in x.strides):
             x = np.ascontiguousarray(x)
-        return mx.array(x, dtype=mlx_dtype)
+        try:
+            return mx.array(x, dtype=mlx_dtype)
+        except RuntimeError:
+            # mlx raises a bare std::bad_cast, remove once it names the dtype.
+            standardize_dtype(x.dtype)
+            raise
 
     if isinstance(x, list):
         return mx.array(x, dtype=mlx_dtype)
