@@ -1625,7 +1625,15 @@ def floor_divide(x1, x2):
         r = x1 - q * divisor
         q = mx.where((r != 0) & ((r < 0) != (divisor < 0)), q - 1, q)
         return mx.where(zero, mx.zeros_like(q), q)
-    return mx.floor(x1 / x2)
+    # Subtracting the remainder leaves an exact multiple of x2, so the quotient
+    # cannot round up across an integer (4.2 / 1.4 gives 3 in float32).
+    cdt = mx.float32 if x1.dtype in (mx.float16, mx.bfloat16) else x1.dtype
+    a = x1.astype(cdt)
+    b = x2.astype(cdt)
+    q = mx.round((a - mx.remainder(a, b)) / b)
+    inf_q = mx.where((a != 0) & ((a < 0) != (b < 0)), -1.0, 0.0)
+    q = mx.where(mx.isinf(b) & mx.isfinite(a), inf_q, q)
+    return mx.where(b == 0, a / b, q).astype(x1.dtype)
 
 
 def logical_xor(x1, x2):

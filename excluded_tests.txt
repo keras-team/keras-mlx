@@ -55,6 +55,7 @@ keras/src/ops/math_test.py::MathOpsCorrectnessTest::test_istft6
 keras/src/ops/math_test.py::MathOpsCorrectnessTest::test_istft7
 keras/src/ops/math_test.py::MathOpsCorrectnessTest::test_istft8
 keras/src/ops/numpy_test.py::NumpyOneInputOpsCorrectnessTest::test_argpartition
+keras/src/ops/numpy_test.py::NumpyOneInputOpsCorrectnessTest::test_floor_divide_float_quotient_rounding_float64
 keras/src/ops/numpy_test.py::NumpyOneInputOpsDynamicShapeTest::test_argmax_negative_zero
 keras/src/ops/numpy_test.py::NumpyOneInputOpsDynamicShapeTest::test_argmin_negative_zero
 keras/src/quantizers/float8_scaling_test.py::Float8ScalingTest::test_quantize_and_dequantize
