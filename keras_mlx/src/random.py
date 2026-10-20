@@ -71,6 +71,12 @@ def uniform(shape, minval=0.0, maxval=1.0, dtype=None, seed=None):
     dtype = dtype or floatx()
     dtype = to_mlx_dtype(dtype)
     seed = mlx_draw_seed(seed)
+    if dtype == mx.float64:
+        # mlx has no float64 uniform, so sample float32 and scale in float64
+        # on the CPU stream. Remove once mlx has one.
+        with mx.stream(mx.cpu):
+            sample = mx.random.uniform(shape=shape, key=seed).astype(dtype)
+            return sample * (maxval - minval) + minval
     return mx.random.uniform(
         low=minval, high=maxval, shape=shape, dtype=dtype, key=seed
     )
@@ -102,6 +108,13 @@ def truncated_normal(shape, mean=0.0, stddev=1.0, dtype=None, seed=None):
     dtype = dtype or floatx()
     dtype = to_mlx_dtype(dtype)
     seed = mlx_draw_seed(seed)
+    if dtype == mx.float64:
+        # Same float32 sample and float64 scale as uniform.
+        with mx.stream(mx.cpu):
+            sample = mx.random.truncated_normal(
+                lower=-2.0, upper=2.0, shape=shape, key=seed
+            )
+            return sample.astype(dtype) * stddev + mean
     sample = mx.random.truncated_normal(
         lower=-2.0, upper=2.0, shape=shape, dtype=dtype, key=seed
     )
