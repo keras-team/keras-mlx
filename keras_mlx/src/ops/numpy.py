@@ -137,6 +137,12 @@ def _reduces_empty_axis(shape, axis):
     return builtins.any(shape[a % len(shape)] == 0 for a in axes)
 
 
+def _empty_result_shape(x, axis, keepdims):
+    # The output shape when x is empty but the reduced axes are not, else None.
+    if 0 in x.shape and not _reduces_empty_axis(x.shape, axis):
+        return _reduced_shape(x.shape, axis, keepdims)
+
+
 def max(x, axis=None, keepdims=False, initial=None):
     x = convert_to_tensor(x)
     if 0 in x.shape:
@@ -270,6 +276,10 @@ def arctanh(x):
 
 def argmax(x, axis=None, keepdims=False):
     x = convert_to_tensor(x)
+    # mlx rejects empty input, but jax returns an empty result here.
+    empty_shape = _empty_result_shape(x, axis, keepdims)
+    if empty_shape is not None:
+        return mx.zeros(empty_shape, mx.int32)
     # cast to int32 to align with other backends
     indices = mx.argmax(x, axis=axis, keepdims=keepdims)
     # Indices carry no grad, and mlx raises if a later gather sees one.
@@ -278,6 +288,9 @@ def argmax(x, axis=None, keepdims=False):
 
 def argmin(x, axis=None, keepdims=False):
     x = convert_to_tensor(x)
+    empty_shape = _empty_result_shape(x, axis, keepdims)
+    if empty_shape is not None:
+        return mx.zeros(empty_shape, mx.int32)
     # cast to int32 to align with other backends
     indices = mx.argmin(x, axis=axis, keepdims=keepdims)
     return mx.stop_gradient(indices).astype(mx.int32)
@@ -2595,6 +2608,12 @@ def nanmean(x, axis=None, keepdims=False):
 
 
 def nanmedian(x, axis=None, keepdims=False):
+    x = convert_to_tensor(x)
+    empty_shape = _empty_result_shape(x, axis, keepdims)
+    if empty_shape is not None:
+        # mlx cannot reshape an empty array, so build the empty result.
+        dtype = to_mlx_dtype(dtypes.promote_to_float_dtype(x.dtype))
+        return mx.zeros(empty_shape, dtype)
     return nanquantile(x, 0.5, axis=axis, keepdims=keepdims)
 
 
