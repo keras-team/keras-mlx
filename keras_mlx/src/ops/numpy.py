@@ -2206,6 +2206,13 @@ def fmod(x1, x2):
     mlx_dtype = _mlx_result_dtype(dtype)
     x1 = x1.astype(mlx_dtype)
     x2 = x2.astype(mlx_dtype)
+    if dtype in ("int8", "int16", "int32"):
+        # Avoid abs, which wraps for the minimum value, and widening, which
+        # int32 has no room for. Shift the mod style remainder back to the sign
+        # of the dividend. A divisor of -1 gives zero and would trap on the
+        # minimum.
+        r = mx.remainder(x1, mx.where(x2 == -1, mx.ones_like(x2), x2))
+        return mx.where((r != 0) & ((r < 0) != (x1 < 0)), r - x2, r)
     # mx.remainder is mod style, taking the sign of the divisor. fmod takes
     # the sign of the dividend and works on magnitudes.
     return mx.sign(x1) * mx.remainder(mx.abs(x1), mx.abs(x2))
@@ -2229,8 +2236,11 @@ def gcd(x1, x2):
     x2 = convert_to_tensor(x2)
     dtype = _integer_result_dtype("gcd", x1, x2)
     mlx_dtype = _mlx_result_dtype(dtype)
-    a = mx.abs(x1.astype(mlx_dtype))
-    b = mx.abs(x2.astype(mlx_dtype))
+    # Take magnitudes as unsigned so that abs of the minimum does not wrap.
+    unsigned = {mx.int8: mx.uint8, mx.int16: mx.uint16, mx.int32: mx.uint32}
+    unsigned = unsigned.get(mlx_dtype, mlx_dtype)
+    a = mx.abs(x1.astype(mlx_dtype)).astype(unsigned)
+    b = mx.abs(x2.astype(mlx_dtype)).astype(unsigned)
     # Masked elementwise Euclid with a fixed iteration count, so the loop
     # unrolls into a static graph. The worst case is a consecutive
     # Fibonacci pair, which needs about 1.44 * log2(max) iterations.
@@ -2242,7 +2252,7 @@ def gcd(x1, x2):
             mx.where(nonzero, b, a),
             mx.where(nonzero, mx.remainder(a, b_safe), 0),
         )
-    return a
+    return a.astype(mlx_dtype)
 
 
 def geomspace(start, stop, num=50, endpoint=True, dtype=None, axis=0):
