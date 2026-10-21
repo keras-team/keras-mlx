@@ -632,7 +632,12 @@ def digitize(x, bins):
     x = convert_to_tensor(x)
     bins = convert_to_tensor(bins)
 
-    return (x[..., None] >= bins).sum(axis=-1)
+    if bins.size == 0:
+        return mx.zeros(x.shape, dtype=mx.int32)
+    # Counting works for either direction, numpy flips the count for
+    # decreasing bins.
+    count = searchsorted_linear(bins, x, side="right")
+    return mx.where(bins[0] > bins[-1], bins.size - count, count)
 
 
 def dot(x1, x2):
@@ -1802,6 +1807,19 @@ def unravel_index(indices, shape):
     return tuple(reversed(coords))
 
 
+def _searchsorted_less(a, b, side):
+    # Whether a sorts before b, with NaN last and equal to another NaN.
+    has_nan = mx.issubdtype(a.dtype, mx.floating) or mx.issubdtype(
+        b.dtype, mx.floating
+    )
+    less = a < b if side == "left" else a <= b
+    if has_nan and side == "left":
+        less = less | (mx.isnan(b) & ~mx.isnan(a))
+    elif has_nan:
+        less = less | mx.isnan(b)
+    return less
+
+
 def searchsorted_binary(a, b, side="left"):
     original_shape = b.shape
     b_flat = b.reshape(-1)
@@ -1810,14 +1828,8 @@ def searchsorted_binary(a, b, side="left"):
     steps = math.ceil(math.log2(size))
     indices = mx.full(b_flat.shape, vals=size // 2, dtype=mx.int32)
 
-    if side == "left":
-
-        def comparison(x, y):
-            return x <= y
-    else:
-
-        def comparison(x, y):
-            return x < y
+    def comparison(x, y):
+        return ~_searchsorted_less(y, x, side)
 
     upper = size
     lower = 0
@@ -1842,6 +1854,11 @@ def searchsorted_linear(a, b, side="left"):
         result = (a[None, :] < b_flat_broadcast).sum(axis=1)
     else:
         result = (a[None, :] <= b_flat_broadcast).sum(axis=1)
+    if mx.issubdtype(b.dtype, mx.floating):
+        # Only NaN values need fixing, so the full comparison runs on them.
+        nan = mx.array(float("nan"), dtype=b.dtype)
+        nan_result = _searchsorted_less(a, nan, side).sum()
+        result = mx.where(mx.isnan(b_flat), nan_result, result)
 
     return result.reshape(original_shape)
 
