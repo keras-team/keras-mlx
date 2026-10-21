@@ -95,7 +95,8 @@ def convert_to_tensor(x, dtype=None, sparse=None, ragged=None):
         try:
             return mx.array(x, dtype=mlx_dtype)
         except RuntimeError:
-            # mlx raises a bare std::bad_cast, remove once it names the dtype.
+            # mlx raises a bare std::bad_cast. standardize_dtype raises a
+            # ValueError naming the dtype when it is not supported.
             standardize_dtype(x.dtype)
             raise
 
