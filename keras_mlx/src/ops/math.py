@@ -700,9 +700,15 @@ def gammainc(x1, x2):
     # complement.
     fraction = 1.0 - _upper_gamma_fraction(a, x) * prefactor
     out = mx.where(x < a + 1.0, series, fraction)
-    # The logarithm above is not finite at x equal to zero, where the answer
-    # is simply zero.
-    out = mx.where(x > 0, out, mx.zeros_like(out))
+    # The logarithm above is not finite at the edges of the domain. Later
+    # patches take precedence, and the invalid inputs come last.
+    out = mx.where(mx.isinf(x) & (a > 0), 1.0, out)
+    out = mx.where(mx.isinf(a) & (x < mx.inf), 0.0, out)
+    out = mx.where((x == 0) & (a > 0), 0.0, out)
+    out = mx.where((a == 0) & (x > 0), 1.0, out)
+    invalid = mx.isnan(a) | mx.isnan(x) | (a < 0) | (x < 0)
+    invalid = invalid | ((a == 0) & (x == 0)) | (mx.isinf(a) & mx.isinf(x))
+    out = mx.where(invalid, mx.nan, out)
     return out.astype(to_mlx_dtype(dtype))
 
 
