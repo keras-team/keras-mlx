@@ -8,6 +8,7 @@ import numpy as np
 
 from keras.src import tree
 from keras.src.backend.common import KerasVariable as Variable
+from keras.src.backend.common import dtypes
 from keras.src.backend.common import standardize_dtype
 from keras.src.backend.common.backend_utils import slice_along_axis
 from keras.src.backend.common.backend_utils import standardize_argnums
@@ -171,6 +172,13 @@ def shape(x):
 
 def cast(x, dtype):
     return convert_to_tensor(x, dtype=dtype)
+
+
+def promote_to_float(x):
+    float_dtype = dtypes.promote_to_float_dtype(x.dtype)
+    if float_dtype != standardize_dtype(x.dtype):
+        return cast(x, float_dtype)
+    return x
 
 
 # Shape / dtype inference util

@@ -8,6 +8,7 @@ from keras.src.backend.common import standardize_dtype
 from keras.src.backend.common.backend_utils import canonicalize_axis
 from keras.src.utils.module_utils import scipy
 from keras_mlx.src.ops.core import convert_to_tensor
+from keras_mlx.src.ops.core import promote_to_float
 from keras_mlx.src.ops.core import to_mlx_dtype
 
 
@@ -191,6 +192,8 @@ def in_top_k(targets, predictions, k):
 
 def logsumexp(x, axis=None, keepdims=False):
     x = convert_to_tensor(x)
+    # Ints would subtract the max in the int dtype and wrap around.
+    x = promote_to_float(x)
     return mx.logsumexp(x, axis, keepdims)
 
 

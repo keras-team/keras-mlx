@@ -6,7 +6,6 @@ from itertools import accumulate
 import mlx.core as mx
 import mlx.nn as nn
 
-from keras.src.backend.common import dtypes
 from keras.src.backend.common import is_float_dtype
 from keras.src.backend.common import result_type
 from keras.src.backend.common import standardize_dtype
@@ -23,6 +22,7 @@ from keras.src.backend.config import standardize_data_format
 from keras.src.utils.argument_validation import standardize_tuple
 from keras_mlx.src.ops.core import cast
 from keras_mlx.src.ops.core import convert_to_tensor
+from keras_mlx.src.ops.core import promote_to_float
 from keras_mlx.src.ops.core import reverse_sequence
 from keras_mlx.src.ops.core import scan
 from keras_mlx.src.ops.core import to_mlx_dtype
@@ -104,9 +104,7 @@ def sigmoid(x):
 def sparse_sigmoid(x):
     x = convert_to_tensor(x)
     # Ints can't hold the 0.5 midpoint or, if unsigned, the -1 bound.
-    float_dtype = dtypes.promote_to_float_dtype(x.dtype)
-    if float_dtype != standardize_dtype(x.dtype):
-        x = cast(x, float_dtype)
+    x = promote_to_float(x)
     return mx.where(x <= -1, 0, mx.where(x >= 1, 1, 0.5 * (x + 1)))
 
 
@@ -145,6 +143,8 @@ def soft_shrink(x, threshold=0.5):
 
 def sparse_plus(x):
     x = convert_to_tensor(x)
+    # Ints can't hold the fractional results or, if unsigned, the -1 bound.
+    x = promote_to_float(x)
     return mx.where(
         x <= -1,
         mx.zeros_like(x),
@@ -177,9 +177,7 @@ def leaky_relu(x, negative_slope=0.2):
 def hard_sigmoid(x):
     x = convert_to_tensor(x)
     # mlx promotes ints on its own, but to float32 rather than floatx.
-    float_dtype = dtypes.promote_to_float_dtype(x.dtype)
-    if float_dtype != standardize_dtype(x.dtype):
-        x = cast(x, float_dtype)
+    x = promote_to_float(x)
     return mx.maximum(0, mx.minimum(1, x / 6 + 0.5))
 
 
@@ -253,6 +251,8 @@ def log_softmax(x, axis=-1):
 
 def sparsemax(x, axis=-1):
     logits = convert_to_tensor(x)
+    # Ints can't hold the fractional results or, if unsigned, the -1 bound.
+    logits = promote_to_float(logits)
     logits_sorted = -mx.sort(-logits, axis=axis)
     logits_cumsum = mx.cumsum(logits_sorted, axis=axis)  # find cumulative sum
     r = mx.arange(1, logits.shape[axis] + 1)  # Determine the sparsity
