@@ -3,6 +3,7 @@ import itertools
 import operator
 
 import mlx.core as mx
+import numpy as np
 
 from keras.src.backend.common import is_float_dtype
 from keras.src.backend.common import result_type
@@ -633,6 +634,19 @@ def resize(
     return result
 
 
+def _saturate_cast(x, dtype):
+    if not mx.issubdtype(dtype, mx.integer):
+        return x.astype(dtype)
+    # Cubic and lanczos kernels can overshoot, so integer outputs round and
+    # saturate to the dtype range. float32 rounds the 32 and 64 bit maxima up
+    # past the range, so stay one step below them.
+    info = mx.iinfo(dtype)
+    high = info.max
+    if float(np.float32(high)) > high:
+        high = float(np.nextafter(np.float32(high), np.float32(0)))
+    return mx.clip(mx.round(x), info.min, high).astype(dtype)
+
+
 def _scale_and_translate(
     x,
     output_shape,
@@ -681,11 +695,7 @@ def _scale_and_translate(
 
     new_x = mx.einsum("bhwc,hH,wW->bHWc", x.astype(compute_dtype), w_h, w_w)
 
-    # Integer images round and saturate to the input range, since kernels such
-    # as cubic and lanczos can overshoot it.
-    if mx.issubdtype(x.dtype, mx.integer):
-        new_x = mx.clip(mx.round(new_x), x.min(), x.max())
-    return new_x.astype(x.dtype)
+    return _saturate_cast(new_x, x.dtype)
 
 
 def _compute_weight_mat(
@@ -787,11 +797,7 @@ def scale_and_translate(
         # tensordot appends the new output axis, so move it back into place.
         out = mx.tensordot(out, w, axes=([d], [0]))
         out = mx.moveaxis(out, -1, d)
-    # Integer images round and saturate to the input range, since kernels such
-    # as cubic and lanczos can overshoot it.
-    if mx.issubdtype(images.dtype, mx.integer):
-        out = mx.clip(mx.round(out), images.min(), images.max())
-    return out.astype(images.dtype)
+    return _saturate_cast(out, images.dtype)
 
 
 def sobel_edges(images, data_format=None):
