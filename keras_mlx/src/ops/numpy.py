@@ -156,7 +156,8 @@ def max(x, axis=None, keepdims=False, initial=None):
         if needs_initial and initial is None:
             raise ValueError("Cannot compute the max of an empty tensor.")
         fill = initial if needs_initial else 0
-        return mx.full(out_shape, fill, dtype=x.dtype)
+        # mx.full mishandles dtype=bool with an int fill.
+        return mx.full(out_shape, fill).astype(x.dtype)
 
     result = mx.max(x, axis=axis, keepdims=keepdims)
     if initial is not None:
@@ -961,7 +962,8 @@ def min(x, axis=None, keepdims=False, initial=None):
         if needs_initial and initial is None:
             raise ValueError("Cannot compute the min of an empty tensor.")
         fill = initial if needs_initial else 0
-        return mx.full(out_shape, fill, dtype=x.dtype)
+        # mx.full mishandles dtype=bool with an int fill.
+        return mx.full(out_shape, fill).astype(x.dtype)
 
     result = mx.min(x, axis=axis, keepdims=keepdims)
     if initial is not None:
@@ -1609,6 +1611,10 @@ def sum(x, axis=None, keepdims=False):
     if isinstance(x, (list, tuple)):
         x = stack(x)
     x = convert_to_tensor(x)
+    if x.ndim == 0:
+        # mlx widens n-d small ints but keeps the dtype of a 0-d input.
+        dtype = _widen_reduce_int_dtype(standardize_dtype(x.dtype))
+        x = x.astype(_mlx_result_dtype(dtype))
     return mx.sum(x, axis=axis, keepdims=keepdims)
 
 
