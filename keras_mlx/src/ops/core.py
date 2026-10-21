@@ -9,6 +9,7 @@ import numpy as np
 from keras.src import tree
 from keras.src.backend.common import KerasVariable as Variable
 from keras.src.backend.common import dtypes
+from keras.src.backend.common import result_type
 from keras.src.backend.common import standardize_dtype
 from keras.src.backend.common.backend_utils import slice_along_axis
 from keras.src.backend.common.backend_utils import standardize_argnums
@@ -174,11 +175,14 @@ def cast(x, dtype):
     return convert_to_tensor(x, dtype=dtype)
 
 
-def promote_to_float(x):
-    float_dtype = dtypes.promote_to_float_dtype(x.dtype)
-    if float_dtype != standardize_dtype(x.dtype):
-        return cast(x, float_dtype)
-    return x
+def promote_to_float(x, *others):
+    # With several operands they promote together, as jax does for mixed
+    # inputs, and a tuple comes back.
+    if others:
+        dtype = result_type(x.dtype, *[o.dtype for o in others])
+        float_dtype = dtypes.promote_to_float_dtype(dtype)
+        return tuple(cast(t, float_dtype) for t in (x, *others))
+    return cast(x, dtypes.promote_to_float_dtype(x.dtype))
 
 
 # Shape / dtype inference util
