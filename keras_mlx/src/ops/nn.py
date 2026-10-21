@@ -241,11 +241,17 @@ def threshold(x, threshold, default_value):
 
 def softmax(x, axis=-1):
     x = convert_to_tensor(x)
+    # Ints promote to float like jax.
+    x = promote_to_float(x)
     return mx.softmax(x, axis=axis)
 
 
 def log_softmax(x, axis=-1):
     x = convert_to_tensor(x)
+    x = promote_to_float(x)
+    # mlx logsumexp rejects empty input and the result is empty as well.
+    if x.size == 0:
+        return x
     return x - mx.logsumexp(x, axis=axis, keepdims=True)
 
 

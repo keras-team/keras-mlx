@@ -194,6 +194,10 @@ def logsumexp(x, axis=None, keepdims=False):
     x = convert_to_tensor(x)
     # Ints would subtract the max in the int dtype and wrap around.
     x = promote_to_float(x)
+    if x.size == 0:
+        # mlx rejects empty input, jax reduces it to -inf.
+        out_shape = mx.sum(x, axis, keepdims).shape
+        return mx.full(out_shape, -mx.inf, dtype=x.dtype)
     return mx.logsumexp(x, axis, keepdims)
 
 
