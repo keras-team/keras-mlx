@@ -39,9 +39,7 @@ def det(a):
     target = a.dtype
     if a.dtype in (mx.bfloat16, mx.float16):
         a = a.astype(mx.float32)
-    # mlx lu_factor aborts the whole process on an exactly singular
-    # input, so compute the determinant as the eigenvalue product, which
-    # handles singular matrices naturally.
+    # The eigenvalue product handles singular matrices naturally.
     with mx.stream(mx.cpu):
         w = mx.linalg.eigvals(a)
     return mx.real(mx.prod(w, axis=-1)).astype(target)

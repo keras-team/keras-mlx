@@ -1725,17 +1725,15 @@ def slogdet(x):
     target = x.dtype
     if x.dtype in (mx.bfloat16, mx.float16):
         x = x.astype(mx.float32)
-    # mlx lu_factor aborts the whole process on an exactly singular
-    # input, so compute from the eigenvalues, which handle singular
-    # matrices naturally.
+    # An exact zero pivot gives sign 0 and log(0) = -inf, which the eigenvalue
+    # product cannot, and no complex division is needed.
     with mx.stream(mx.cpu):
-        w = mx.linalg.eigvals(x)
-    absw = mx.abs(w)
-    logabsdet = mx.sum(mx.log(absw), axis=-1)
-    # Metal complex division gives nan for a tiny divisor, so divide the parts.
-    safe = mx.where(absw > 0, absw, 1)
-    unit = mx.real(w) / safe + 1j * (mx.imag(w) / safe)
-    sign = mx.round(mx.real(mx.prod(unit, axis=-1)))
+        lu, pivots = mx.linalg.lu_factor(x)
+    diag = mx.diagonal(lu, axis1=-2, axis2=-1)
+    swaps = mx.sum(pivots != mx.arange(pivots.shape[-1]), axis=-1)
+    negative = mx.sum(diag < 0, axis=-1) + swaps
+    sign = mx.where(mx.all(diag != 0, axis=-1), 1 - 2 * (negative % 2), 0)
+    logabsdet = mx.sum(mx.log(mx.abs(diag)), axis=-1)
     return (sign.astype(target), logabsdet.astype(target))
 
 
