@@ -433,6 +433,9 @@ def while_loop(
     maximum_iterations=None,
 ):
     current_iter = 0
+    if isinstance(maximum_iterations, mx.array):
+        # Comparing against an array would wait for the device every iteration.
+        maximum_iterations = maximum_iterations.item()
 
     def iteration_check(iter):
         return maximum_iterations is None or iter < maximum_iterations
@@ -445,6 +448,13 @@ def while_loop(
         if not isinstance(loop_vars, (list, tuple)):
             loop_vars = (loop_vars,)
         loop_vars = tuple(loop_vars)
+        # Start this iteration on the device while the host builds the next.
+        try:
+            mx.async_eval(loop_vars)
+        except ValueError:
+            # Not allowed inside a transformation such as `mx.grad`, and mlx
+            # has no way to ask whether we are in one.
+            pass
         current_iter += 1
     return loop_vars if is_tuple else loop_vars[0]
 
