@@ -195,6 +195,10 @@ def all(x, axis=None, keepdims=False):
 
 def any(x, axis=None, keepdims=False):
     x = convert_to_tensor(x)
+    if x.dtype in (mx.int8, mx.uint8):
+        # The Metal reduce treats 1 byte ints as bool, so values like 2 are
+        # lost. Remove once mlx fixes it.
+        x = x != 0
     return mx.any(x, axis=axis, keepdims=keepdims)
 
 
