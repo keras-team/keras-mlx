@@ -1116,8 +1116,8 @@ def prod(x, axis=None, keepdims=False, dtype=None):
     if dtype is None:
         dtype = _widen_reduce_int_dtype(result_type(x.dtype))
     mlx_dtype = to_mlx_dtype(dtype)
-    output = mx.prod(x, axis=axis, keepdims=keepdims)
-    return output.astype(mlx_dtype)
+    # The dtype is the accumulator dtype, so cast first (floats truncate).
+    return mx.prod(x.astype(mlx_dtype), axis=axis, keepdims=keepdims)
 
 
 def _quantile_prep(x):
