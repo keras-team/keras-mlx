@@ -14,15 +14,19 @@ from keras.src.backend.common.backend_utils import vectorize_impl
 from keras_mlx.src.ops.core import cast
 from keras_mlx.src.ops.core import convert_to_tensor
 from keras_mlx.src.ops.core import convert_to_tensors
-from keras_mlx.src.ops.core import is_tensor
 from keras_mlx.src.ops.core import slice
 from keras_mlx.src.ops.core import to_mlx_dtype
+
+
+def _result_dtype(*xs):
+    # Python scalars have no dtype so they stay weak in result_type.
+    return result_type(*[getattr(x, "dtype", type(x)) for x in xs])
 
 
 def _promote(*xs):
     # mlx promotes uint32 + signed to int32, keras/jax want int64. Cast to
     # result_type so the output dtype matches the other backends.
-    dtype = result_type(*[getattr(x, "dtype", type(x)) for x in xs])
+    dtype = _result_dtype(*xs)
     return [convert_to_tensor(x, dtype) for x in xs]
 
 
@@ -379,15 +383,15 @@ def bitwise_xor(x, y):
 
 
 def bitwise_left_shift(x, y):
+    # Take the result dtype before converting so Python scalars stay weak.
+    result_dtype = _result_dtype(x, y)
+    # jax and numpy shift booleans as integers.
+    if result_dtype == "bool":
+        result_dtype = "int32"
     x = convert_to_tensor(x)
     if not isinstance(y, int):
         y = convert_to_tensor(y)
 
-    # handle result dtype to match other backends
-    types = [x.dtype]
-    if is_tensor(y):
-        types.append(y.dtype)
-    result_dtype = result_type(*types)
     mlx_result_dtype = to_mlx_dtype(result_dtype)
 
     result = mx.left_shift(x, y)
@@ -401,15 +405,15 @@ def left_shift(x, y):
 
 
 def bitwise_right_shift(x, y):
+    # Take the result dtype before converting so Python scalars stay weak.
+    result_dtype = _result_dtype(x, y)
+    # jax and numpy shift booleans as integers.
+    if result_dtype == "bool":
+        result_dtype = "int32"
     x = convert_to_tensor(x)
     if not isinstance(y, int):
         y = convert_to_tensor(y)
 
-    # handle result dtype to match other backends
-    types = [x.dtype]
-    if is_tensor(y):
-        types.append(y.dtype)
-    result_dtype = result_type(*types)
     mlx_result_dtype = to_mlx_dtype(result_dtype)
 
     result = mx.right_shift(x, y)
@@ -517,8 +521,7 @@ def copy(x):
 
 
 def copysign(x1, x2):
-    x1 = convert_to_tensor(x1)
-    x2 = convert_to_tensor(x2)
+    x1, x2 = _promote(x1, x2)
     dtype = _mlx_result_dtype(result_type(x1.dtype, x2.dtype, float))
     x1 = x1.astype(dtype)
     x2 = x2.astype(dtype)
@@ -1527,8 +1530,7 @@ def divide(x1, x2):
 
 
 def divide_no_nan(x1, x2):
-    x1 = convert_to_tensor(x1)
-    x2 = convert_to_tensor(x2)
+    x1, x2 = _promote(x1, x2)
     safe_x2 = mx.where(x2 == 0, 1, x2)
     return mx.where(x2 == 0, 0, mx.divide(x1, safe_x2))
 
@@ -1620,6 +1622,9 @@ def floor_divide(x1, x2):
     dtype = result_type(
         getattr(x1, "dtype", type(x1)), getattr(x2, "dtype", type(x2))
     )
+    # jax and numpy floor divide booleans as integers.
+    if dtype == "bool":
+        dtype = "int32"
     x1 = convert_to_tensor(x1, dtype=dtype)
     x2 = convert_to_tensor(x2, dtype=dtype)
     if "int" in standardize_dtype(dtype):
@@ -2198,8 +2203,7 @@ def fmin(x1, x2):
 
 
 def fmod(x1, x2):
-    x1 = convert_to_tensor(x1)
-    x2 = convert_to_tensor(x2)
+    x1, x2 = _promote(x1, x2)
     dtype = result_type(x1.dtype, x2.dtype)
     if dtype == "bool":
         dtype = "int32"
@@ -2232,8 +2236,7 @@ def _integer_result_dtype(op_name, x1, x2):
 
 
 def gcd(x1, x2):
-    x1 = convert_to_tensor(x1)
-    x2 = convert_to_tensor(x2)
+    x1, x2 = _promote(x1, x2)
     dtype = _integer_result_dtype("gcd", x1, x2)
     mlx_dtype = _mlx_result_dtype(dtype)
     # Take magnitudes as unsigned so that abs of the minimum does not wrap.
@@ -2305,8 +2308,7 @@ def hanning(x):
 
 
 def heaviside(x1, x2):
-    x1 = convert_to_tensor(x1)
-    x2 = convert_to_tensor(x2)
+    x1, x2 = _promote(x1, x2)
     dtype = result_type(x1.dtype, x2.dtype)
     if dtype in ("int8", "int16", "int32", "uint8", "uint16", "uint32"):
         dtype = config.floatx()
@@ -2327,8 +2329,7 @@ def hsplit(x, indices_or_sections):
 
 
 def hypot(x1, x2):
-    x1 = convert_to_tensor(x1)
-    x2 = convert_to_tensor(x2)
+    x1, x2 = _promote(x1, x2)
     dtype = result_type(x1.dtype, x2.dtype)
     if dtype in ("int8", "int16", "int32", "uint8", "uint16", "uint32"):
         dtype = config.floatx()
@@ -2453,8 +2454,7 @@ def kron(x1, x2):
 
 
 def lcm(x1, x2):
-    x1 = convert_to_tensor(x1)
-    x2 = convert_to_tensor(x2)
+    x1, x2 = _promote(x1, x2)
     # Validate here so a non-integer dtype names lcm rather than gcd.
     _integer_result_dtype("lcm", x1, x2)
     g = gcd(x1, x2)
@@ -2663,8 +2663,7 @@ def nanvar(x, axis=None, keepdims=False):
 
 
 def nextafter(x1, x2):
-    x1 = convert_to_tensor(x1)
-    x2 = convert_to_tensor(x2)
+    x1, x2 = _promote(x1, x2)
     dtype = result_type(x1.dtype, x2.dtype, float)
     mlx_dtype = _mlx_result_dtype(dtype)
     x1 = x1.astype(mlx_dtype)
