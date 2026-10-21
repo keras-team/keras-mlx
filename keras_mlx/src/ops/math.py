@@ -147,7 +147,12 @@ def top_k(x, k, sorted=True, is_stable=True):
             "`k` must be less than or equal to the size of the last "
             f"dimension of `x` ({x.shape[-1]}). Received: k={k}"
         )
-    ranked = mx.negative(x)
+    if mx.issubdtype(x.dtype, mx.integer):
+        # Negation wraps unsigned ints and leaves the signed minimum in place,
+        # so rank by bitwise not, which reverses the order without overflow.
+        ranked = mx.bitwise_invert(x)
+    else:
+        ranked = mx.negative(x)
     if is_stable:
         # mx.argsort is stable, so ranking the whole axis breaks ties by the
         # lower index the way the other backends do. mx.argpartition makes no
