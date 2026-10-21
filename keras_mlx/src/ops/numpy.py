@@ -549,12 +549,12 @@ def cross(x1, x2, axisa=-1, axisb=-1, axisc=-1, axis=None):
 
     result = mx.linalg.cross(x1, x2)
 
-    if x1.shape[-1] == 2:
-        result = result[
-            ..., 2
-        ]  # if inputs are 2D vectors, take only scalar result
+    # Two 2-vectors give a scalar. A mixed pair is padded to 3.
+    scalar_result = x1.shape[-1] == 2 and x2.shape[-1] == 2
+    if scalar_result:
+        result = result[..., 2]
 
-    if axisc != -1:
+    if axisc != -1 and not scalar_result:
         result = mx.moveaxis(result, -1, axisc)
 
     return result
