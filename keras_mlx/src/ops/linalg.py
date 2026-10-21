@@ -144,8 +144,10 @@ def norm(x, ord=None, axis=None, keepdims=False):
     if "int" in dtype or dtype == "bool":
         dtype = result_type(x.dtype, "float32")
     x = convert_to_tensor(x, dtype=dtype)
-    # mlx linalg kernels do not support bfloat16, compute in float32.
-    if x.dtype == mx.bfloat16:
+    # mlx linalg kernels do not support half precision, compute in float32 and
+    # cast back to the input dtype.
+    result_dtype = x.dtype
+    if x.dtype in (mx.bfloat16, mx.float16):
         x = x.astype(mx.float32)
     # Singular value matrix norms are svd-based, which is CPU-only in mlx.
     if isinstance(axis, (tuple, list)):
@@ -168,7 +170,7 @@ def norm(x, ord=None, axis=None, keepdims=False):
         # mlx flattens the input when axis is None and ord is None, losing
         # the dimensions that numpy keeps with keepdims.
         output = output.reshape((1,) * x.ndim)
-    return output
+    return output.astype(result_dtype)
 
 
 def inv(a):
