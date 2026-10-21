@@ -1700,7 +1700,8 @@ def correlate(x1, x2, mode="valid"):
 
 
 def select(condlist, choicelist, default=0):
-    x = convert_to_tensor(default)
+    # Python scalars stay weak, so they do not widen the choices' dtype.
+    *choicelist, x = _promote(*choicelist, default)
 
     for condition, choice in zip(reversed(condlist), reversed(choicelist)):
         x = mx.where(condition, choice, x)
