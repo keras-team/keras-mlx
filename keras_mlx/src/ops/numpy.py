@@ -2502,9 +2502,11 @@ def ldexp(x1, x2):
     second = (x2 - first) // 2
     third = x2 - first - second
     two = mx.array(2, dtype=mlx_dtype)
+    result = x1
     for exponent in (first, second, third):
-        x1 = x1 * mx.power(two, exponent.astype(mlx_dtype))
-    return x1
+        result = result * mx.power(two, exponent.astype(mlx_dtype))
+    # Zeros and infs pass through, so 0 * inf can't turn them into nan.
+    return mx.where((x1 == 0) | mx.isinf(x1), x1, result)
 
 
 def logaddexp2(x1, x2):
