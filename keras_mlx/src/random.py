@@ -1,4 +1,5 @@
 import contextlib
+import math
 
 import mlx.core as mx
 
@@ -85,10 +86,16 @@ def categorical(logits, num_samples, dtype="int32", seed=None):
 def randint(shape, minval, maxval, dtype="int32", seed=None):
     seed = mlx_draw_seed(seed)
     dtype = to_mlx_dtype(dtype)
-
-    return mx.random.randint(
-        low=minval, high=maxval, shape=shape, dtype=dtype, key=seed
-    )
+    shape = tuple(shape)
+    # mx.random.randint skips integers past 2**24, split returns raw bits.
+    words = mx.random.split(seed, math.prod(shape)).astype(mx.uint64)
+    bits = ((words[:, 0] << 32) | words[:, 1]).reshape(shape)
+    low = convert_to_tensor(minval, "int64")
+    high = convert_to_tensor(maxval, "int64")
+    # An empty range returns minval.
+    span = mx.where(high > low, high - low, 1).astype(mx.uint64)
+    offset = mx.remainder(bits, span).astype(mx.int64)
+    return (low + offset).astype(dtype)
 
 
 def truncated_normal(shape, mean=0.0, stddev=1.0, dtype=None, seed=None):
