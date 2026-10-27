@@ -159,17 +159,7 @@ _INDEX_FIXERS = {
 
 
 def _is_integer(a):
-    # Should we add bool?
-    return to_mlx_dtype(a.dtype) in (
-        mx.int32,
-        mx.uint32,
-        mx.int64,
-        mx.uint64,
-        mx.int16,
-        mx.uint16,
-        mx.int8,
-        mx.uint8,
-    )
+    return mx.issubdtype(a.dtype, mx.integer)
 
 
 def _round_half_away_from_zero(x):
