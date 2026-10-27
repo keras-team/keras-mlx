@@ -14,6 +14,7 @@ from keras.src.backend.common.backend_utils import vectorize_impl
 from keras_mlx.src.ops.core import cast
 from keras_mlx.src.ops.core import convert_to_tensor
 from keras_mlx.src.ops.core import convert_to_tensors
+from keras_mlx.src.ops.core import scatter
 from keras_mlx.src.ops.core import slice
 from keras_mlx.src.ops.core import to_mlx_dtype
 
@@ -440,20 +441,6 @@ def right_shift(x, y):
     return bitwise_right_shift(x, y)
 
 
-def _bincount_1d(x, weights=None, minlength=0):
-    x_max = mx.max(x)
-    # The length is data dependent, and mx.zeros needs a Python int shape.
-    length = int(mx.maximum(x_max + 1, minlength))
-
-    counts = mx.zeros(length)
-    if weights is None:
-        counts = counts.at[x].add(1)
-    else:
-        counts = counts.at[x].add(weights)
-
-    return counts
-
-
 def bincount(x, weights=None, minlength=0, sparse=False):
     if sparse:
         raise ValueError("Unsupported value `sparse=True` with mlx backend")
@@ -473,15 +460,20 @@ def bincount(x, weights=None, minlength=0, sparse=False):
         dtype = "int32"
     mlx_dtype = to_mlx_dtype(dtype)
 
-    if len(x.shape) == 2:
-        batch_size = x.shape[0]
-        results = []
-        for i in range(batch_size):
-            w = None if weights is None else weights[i]
-            results.append(_bincount_1d(x[i], w, minlength))
-        return mx.stack(results).astype(mlx_dtype)
+    # The length is data dependent, and mx.zeros needs a Python int shape.
+    length = minlength
+    if x.size > 0:
+        length = builtins.max(int(mx.max(x)) + 1, minlength)
+    if weights is None:
+        updates = mx.ones(x.shape, dtype=mlx_dtype)
+    else:
+        updates = weights.astype(mlx_dtype)
 
-    return _bincount_1d(x, weights, minlength).astype(mlx_dtype)
+    if len(x.shape) == 2:
+        rows = mx.broadcast_to(mx.arange(x.shape[0])[:, None], x.shape)
+        indices = mx.stack([rows, x.astype(mx.int32)], axis=-1)
+        return scatter(indices, updates, (x.shape[0], length))
+    return scatter(x[:, None], updates, (length,))
 
 
 def broadcast_to(x, shape):
