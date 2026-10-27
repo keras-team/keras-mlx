@@ -595,7 +595,22 @@ def scan(f, init, xs=None, length=None, reverse=False, unroll=1):
     init_flat = tree.flatten(init)
     init_flat = [convert_to_tensor(v) for v in init_flat]
     init = pack_output(init_flat)
-    dummy_y = [mx.zeros_like(v) for v in init_flat]
+
+    if n == 0:
+        # Run f once for the shape of ys, discarding state updates.
+        x_slice = [
+            KerasTensor(x.shape[1:], standardize_dtype(x.dtype))
+            for x in xs_flat
+        ]
+        _, y = compute_output_spec(
+            f, init, pack_input(x_slice) if x_slice else None
+        )
+        stacked_y = tree.map_structure(
+            lambda y: mx.zeros((0,) + y.shape, dtype=to_mlx_dtype(y.dtype)),
+            y,
+            none_is_leaf=False,
+        )
+        return init, stacked_y
 
     carry = init
     ys = []
@@ -604,16 +619,9 @@ def scan(f, init, xs=None, length=None, reverse=False, unroll=1):
         xs_slice = [x[i] for x in xs_unstacked]
         packed_xs = pack_input(xs_slice) if len(xs_slice) > 0 else None
         carry, y = f(carry, packed_xs)
-        ys.append(y if y is not None else dummy_y)
-    if not ys:
-        # A zero-length scan returns the carry and empty leading-dim stacks.
-        stacked_y = tree.map_structure(
-            lambda y: mx.zeros((0,) + y.shape, dtype=y.dtype),
-            pack_output(dummy_y),
-        )
-        return carry, stacked_y
+        ys.append(y)
     stacked_y = tree.map_structure(
-        lambda *ys: mx.stack(ys), *maybe_reversed(ys)
+        lambda *ys: mx.stack(ys), *maybe_reversed(ys), none_is_leaf=False
     )
     return carry, stacked_y
 
