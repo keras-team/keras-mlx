@@ -1440,7 +1440,10 @@ def _flash_attention(query, key, value, bias, mask, is_causal, scale):
     k = mx.swapaxes(key.astype(dtype), 1, 2)
     v = mx.swapaxes(value.astype(dtype), 1, 2)
 
-    if bias is None and mask is None:
+    # mlx aligns its "causal" mask to the bottom right and keras to the top
+    # left, so the string only fits when the query and key lengths match.
+    square = q.shape[2] == k.shape[2]
+    if bias is None and mask is None and (square or not is_causal):
         fused_mask = "causal" if is_causal else None
     else:
         # The kernel takes one additive mask, so fold the bias and the mask
