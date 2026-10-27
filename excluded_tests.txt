@@ -52,8 +52,6 @@ keras/src/ops/math_test.py::MathOpsCorrectnessTest::test_istft3
 keras/src/ops/math_test.py::MathOpsCorrectnessTest::test_istft4
 keras/src/ops/math_test.py::MathOpsCorrectnessTest::test_istft5
 keras/src/ops/math_test.py::MathOpsCorrectnessTest::test_istft6
-keras/src/ops/math_test.py::MathOpsCorrectnessTest::test_istft7
-keras/src/ops/math_test.py::MathOpsCorrectnessTest::test_istft8
 keras/src/ops/numpy_test.py::NumpyOneInputOpsCorrectnessTest::test_argpartition_backend_specific
 keras/src/ops/numpy_test.py::NumpyOneInputOpsCorrectnessTest::test_floor_divide_float_quotient_rounding_float64
 keras/src/ops/numpy_test.py::NumpyOneInputOpsDynamicShapeTest::test_argmax_negative_zero
@@ -85,13 +83,5 @@ keras/src/saving/saving_api_test.py::LoadWeightsTests::test_load_weights_weights
 keras/src/trainers/trainer_test.py::TestTrainer::test_evaluate_with_custom_test_step_dict
 keras/src/trainers/trainer_test.py::TestTrainer::test_evaluate_with_custom_test_step_flat
 keras/src/trainers/trainer_test.py::TestTrainer::test_fit_with_custom_train_step
-# These fork workers while another thread evaluates, and mlx is not fork safe.
-keras/src/trainers/trainer_test.py::TestTrainer::test_fit_with_data_adapter_py_dataset_multiprocessing
-keras/src/trainers/trainer_test.py::TestTrainer::test_fit_with_data_adapter_py_dataset_multiprocessing_cw
-keras/src/trainers/trainer_test.py::TestTrainer::test_fit_with_data_adapter_py_dataset_multiprocessing_infinite
-# These build backend tensors on worker threads, ml-explore/mlx#3529.
-keras/src/trainers/trainer_test.py::TestTrainer::test_fit_with_data_adapter_py_dataset_multithreading
-keras/src/trainers/trainer_test.py::TestTrainer::test_fit_with_data_adapter_py_dataset_multithreading_cw
-keras/src/trainers/trainer_test.py::TestTrainer::test_fit_with_data_adapter_py_dataset_multithreading_infinite
 keras/src/utils/image_dataset_utils_test.py::ImageDatasetFromDirectoryTest::test_image_dataset_from_directory_shuffle_grain
 keras/src/utils/image_dataset_utils_test.py::ImageDatasetFromDirectoryTest::test_image_dataset_from_directory_shuffle_with_split_grain
