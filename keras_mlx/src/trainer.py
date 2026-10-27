@@ -811,8 +811,6 @@ class Trainer(BaseTrainer):
                             non_trainable_variables=state[1]
                         )
                         self._state_synced = False
-                    else:
-                        state = (state[0], non_trainable_variables)
                     batch_outputs, state = self.predict_function(
                         state, iter(data)
                     )
