@@ -10,6 +10,7 @@ from keras.src.utils.module_utils import scipy
 from keras_mlx.src.ops.core import convert_to_tensor
 from keras_mlx.src.ops.core import int_dtype_of_size
 from keras_mlx.src.ops.core import promote_to_float
+from keras_mlx.src.ops.core import scatter_update
 from keras_mlx.src.ops.core import to_mlx_dtype
 
 
@@ -18,10 +19,6 @@ def _segment_reduction_fn(
 ):
     data = convert_to_tensor(data)
     segment_ids = convert_to_tensor(segment_ids)
-
-    if data.dtype == mx.int64:
-        # GPU scatter does not yet support int64 for the input or updates.
-        data = data.astype(mx.int32)
 
     if num_segments is None:
         num_segments = int(mx.max(segment_ids).item()) + 1
@@ -47,6 +44,7 @@ def _segment_reduction_fn(
 
     is_int = "int" in standardize_dtype(data.dtype)
 
+    ids = safe_segment_ids[:, None]
     if reduction_method == "max":
         # -inf overflows when cast to an integer dtype, so use the dtype min.
         fill = (
@@ -54,20 +52,20 @@ def _segment_reduction_fn(
         )
         masked_data = mx.where(mask, data, fill)
         result = mx.full(data_shape, fill, dtype=data.dtype)
-        result = result.at[safe_segment_ids].maximum(masked_data)
+        result = scatter_update(result, ids, masked_data, "max")
     elif reduction_method == "min":
         fill = np.iinfo(standardize_dtype(data.dtype)).max if is_int else mx.inf
         masked_data = mx.where(mask, data, fill)
         result = mx.full(data_shape, fill, dtype=data.dtype)
-        result = result.at[safe_segment_ids].minimum(masked_data)
+        result = scatter_update(result, ids, masked_data, "min")
     elif reduction_method == "prod":
         masked_data = mx.where(mask, data, 1)
         result = mx.ones(data_shape, dtype=data.dtype)
-        result = result.at[safe_segment_ids].multiply(masked_data)
+        result = scatter_update(result, ids, masked_data, "mul")
     else:  # sum
         masked_data = mx.where(mask, data, 0)
         result = mx.zeros(data_shape, dtype=data.dtype)
-        result = result.at[safe_segment_ids].add(masked_data)
+        result = scatter_update(result, ids, masked_data, "add")
 
     return result
 
