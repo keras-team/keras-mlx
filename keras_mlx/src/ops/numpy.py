@@ -2286,11 +2286,6 @@ def geomspace(start, stop, num=50, endpoint=True, dtype=None, axis=0):
     common_shape = mx.broadcast_shapes(start.shape, stop.shape)
     start = mx.broadcast_to(start, common_shape)
     stop = mx.broadcast_to(stop, common_shape)
-    if bool(mx.any(start == 0)) or bool(mx.any(stop == 0)):
-        raise ValueError(
-            "Geometric sequence cannot include zero. "
-            f"Received: start={start}, stop={stop}"
-        )
     num = int(num)
     # Interpolate linearly in log space, using the sign of start so that
     # all negative sequences work.
