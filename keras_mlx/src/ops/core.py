@@ -154,8 +154,6 @@ def convert_to_numpy(x):
             # mlx currently has an error passing bfloat16 array to numpy
             # upcast to float32 then downcast to bfloat16
             return np.array(x.astype(mx.float32)).astype(ml_dtypes.bfloat16)
-        if x.ndim == 0:
-            return np.array(x.item(), dtype=standardize_dtype(x.dtype))
     # np.array evaluates through the buffer protocol, no eval needed.
     return np.array(x)
 
