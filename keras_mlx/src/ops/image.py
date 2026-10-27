@@ -436,10 +436,17 @@ def _resize_nearest(x, output_shape):
     for d in spatial_dims:
         m = input_shape[d]
         n = output_shape[d]
-        offsets = (mx.arange(n, dtype=mx.float32) + 0.5) * m / n
-        offsets = mx.floor(offsets.astype(mx.float32)).astype(mx.int32)
+        # A repeat or strided slice avoids the gather for integer factors.
+        if m and n % m == 0:
+            x = mx.repeat(x, n // m, axis=d)
+            continue
         indices = [slice(None)] * len(input_shape)
-        indices[d] = offsets
+        if m and m % n == 0:
+            indices[d] = slice(m // n // 2, None, m // n)
+        else:
+            offsets = (mx.arange(n, dtype=mx.float32) + 0.5) * m / n
+            offsets = mx.floor(offsets.astype(mx.float32)).astype(mx.int32)
+            indices[d] = offsets
         x = x[tuple(indices)]
     return x
 
