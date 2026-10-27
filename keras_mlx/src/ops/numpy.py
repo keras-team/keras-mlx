@@ -2776,6 +2776,33 @@ def trapezoid(y, x=None, dx=1.0, axis=-1):
 
 # The sorted argument is accepted for API consistency but not forwarded,
 # the implementation always returns sorted unique values.
+def _unique_sized(
+    x, size, return_index, return_inverse, return_counts, fill_value
+):
+    # Asking for at least x.size entries keeps the inverse untruncated.
+    stream = mx.cpu if x.dtype == mx.bool_ else mx.default_device()
+    outputs = mx.unique(
+        x,
+        size=builtins.max(size, x.size),
+        return_index=return_index,
+        return_inverse=return_inverse,
+        return_counts=return_counts,
+        fill_value=fill_value,
+        stream=stream,
+    )
+    if not isinstance(outputs, tuple):
+        return outputs[:size]
+    outputs = list(outputs)
+    outputs[0] = outputs[0][:size]
+    if return_index:
+        outputs[1] = outputs[1][:size].astype(mx.int32)
+    if return_inverse:
+        outputs[1 + return_index] = outputs[1 + return_index].astype(mx.int32)
+    if return_counts:
+        outputs[-1] = outputs[-1][:size]
+    return tuple(outputs)
+
+
 def unique(
     x,
     sorted=True,
@@ -2787,6 +2814,10 @@ def unique(
     fill_value=None,
 ):
     x = convert_to_tensor(x)
+    if size is not None and axis is None:
+        return _unique_sized(
+            x, size, return_index, return_inverse, return_counts, fill_value
+        )
     if axis is None:
         dim = 0
         flat = x.reshape(-1)
