@@ -1121,10 +1121,10 @@ def elastic_transform(
         need_squeeze = True
 
     if data_format == "channels_last":
-        batch_size, height, width, channels = images.shape
+        batch_size, height, width, _ = images.shape
         channel_axis = -1
     else:
-        batch_size, channels, height, width = images.shape
+        batch_size, _, height, width = images.shape
         channel_axis = 1
 
     # jax uses the same seed for both dx and dy, so mirror that for parity.
@@ -1171,39 +1171,18 @@ def elastic_transform(
     distorted_x = x + alpha * dx
     distorted_y = y + alpha * dy
 
-    transformed_images = mx.zeros_like(images)
-    if data_format == "channels_last":
-        for i in range(channels):
-            transformed_channel = []
-            for b in range(batch_size):
-                transformed_channel.append(
-                    map_coordinates(
-                        images[b, :, :, i],
-                        [distorted_y[b], distorted_x[b]],
-                        order=AFFINE_TRANSFORM_INTERPOLATIONS[interpolation],
-                        fill_mode=fill_mode,
-                        fill_value=fill_value,
-                    )
-                )
-            transformed_images = transformed_images.at[:, :, :, i].add(
-                mx.stack(transformed_channel)
-            )
-    else:  # channels_first
-        for i in range(channels):
-            transformed_channel = []
-            for b in range(batch_size):
-                transformed_channel.append(
-                    map_coordinates(
-                        images[b, i, :, :],
-                        [distorted_y[b], distorted_x[b]],
-                        order=AFFINE_TRANSFORM_INTERPOLATIONS[interpolation],
-                        fill_mode=fill_mode,
-                        fill_value=fill_value,
-                    )
-                )
-            transformed_images = transformed_images.at[:, i, :, :].add(
-                mx.stack(transformed_channel)
-            )
+    if data_format == "channels_first":
+        images = mx.transpose(images, (0, 2, 3, 1))
+    transformed_images = _map_coordinates_batched(
+        images,
+        mx.expand_dims(distorted_y, axis=-1),
+        mx.expand_dims(distorted_x, axis=-1),
+        order=AFFINE_TRANSFORM_INTERPOLATIONS[interpolation],
+        fill_mode=fill_mode,
+        fill_value=fill_value,
+    )
+    if data_format == "channels_first":
+        transformed_images = mx.transpose(transformed_images, (0, 3, 1, 2))
 
     if need_squeeze:
         transformed_images = mx.squeeze(transformed_images, axis=0)
