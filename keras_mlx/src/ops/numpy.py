@@ -2323,7 +2323,7 @@ def hanning(x):
 def heaviside(x1, x2):
     x1, x2 = _promote(x1, x2)
     dtype = result_type(x1.dtype, x2.dtype)
-    if dtype in ("int8", "int16", "int32", "uint8", "uint16", "uint32"):
+    if dtype in ("bool", "int8", "int16", "int32", "uint8", "uint16", "uint32"):
         dtype = config.floatx()
     elif dtype == "int64":
         dtype = "float64"
