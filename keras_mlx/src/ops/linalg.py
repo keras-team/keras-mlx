@@ -223,7 +223,8 @@ def lstsq(a, b, rcond=None):
         rcond = mx.where(rcond < 0, eps, rcond)
     u, s, vt = svd(a, full_matrices=False)
 
-    mask = s >= mx.array(rcond, dtype=s.dtype) * s[0]
+    # A zero matrix has s[0] == 0, which would keep every zero singular value.
+    mask = (s > 0) & (s >= mx.array(rcond, dtype=s.dtype) * s[0])
     safe_s = mx.array(mx.where(mask, s, 1), dtype=dtype)
     s_inv = mx.where(mask, 1 / safe_s, 0)
     s_inv = mx.expand_dims(s_inv, axis=1)
