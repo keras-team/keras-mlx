@@ -23,7 +23,6 @@ from keras.src.utils.argument_validation import standardize_tuple
 from keras_mlx.src.ops.core import cast
 from keras_mlx.src.ops.core import convert_to_tensor
 from keras_mlx.src.ops.core import promote_to_float
-from keras_mlx.src.ops.core import reverse_sequence
 from keras_mlx.src.ops.core import scan
 from keras_mlx.src.ops.core import to_mlx_dtype
 from keras_mlx.src.ops.numpy import _unique_prepare
@@ -683,11 +682,6 @@ def conv_transpose(
         )
     groups = channels // kernel_in_channels
 
-    for ax in range(1, kernel.ndim - 1):
-        # flip=True produces unexpected gradients
-        # manually flip spatial dimensions until fixed
-        kernel = reverse_sequence(kernel, axis=ax)
-
     result = mx.conv_general(
         inputs,
         kernel,
@@ -696,7 +690,7 @@ def conv_transpose(
         kernel_dilation=dilation_rate,
         input_dilation=strides,
         groups=groups,
-        flip=False,
+        flip=True,
     )
 
     if data_format == "channels_first":
