@@ -726,18 +726,17 @@ class custom_gradient:
             lambda x: x.value if isinstance(x, Variable) else x, args
         )
 
+        grad_fn_slot = [None]
+
         @mx.custom_function
         def call(*primals):
-            outputs, _ = fun(*primals, **kwargs)
+            outputs, grad_fn = fun(*primals, **kwargs)
+            grad_fn_slot[0] = grad_fn
             return outputs
 
         @call.vjp
         def call_vjp(primals, cotangent, output):
-            # mlx gives a bare array for one primal and a tuple for several.
-            if not isinstance(primals, (tuple, list)):
-                primals = (primals,)
-            _, grad_fn = fun(*primals, **kwargs)
-            grads = grad_fn(cotangent)
+            grads = grad_fn_slot[0](cotangent)
             if not isinstance(grads, (tuple, list)):
                 grads = (grads,)
             return tuple(grads)
