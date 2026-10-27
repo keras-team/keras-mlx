@@ -24,6 +24,29 @@ def _det_3x3(a):
     )
 
 
+@mx.custom_function
+def _eigvals_det(a):
+    # The eigenvalue product handles singular matrices naturally.
+    with mx.stream(mx.cpu):
+        w = mx.linalg.eigvals(a)
+    return mx.real(mx.prod(w, axis=-1))
+
+
+@_eigvals_det.vjp
+def _eigvals_det_vjp(primals, cotangent, output):
+    # eigvals has no vjp. The gradient is the transposed adjugate, built from
+    # the svd so it stays finite for singular matrices.
+    with mx.stream(mx.cpu):
+        u, s, vt = mx.linalg.svd(primals)
+    # The singular values drop the sign, which is det(u @ vt).
+    sign = _eigvals_det(mx.matmul(u, vt))
+    others = mx.cumprod(s, axis=-1, inclusive=False) * mx.cumprod(
+        s, axis=-1, reverse=True, inclusive=False
+    )
+    adjugate_t = mx.matmul(u * others[..., None, :], vt)
+    return (cotangent * sign)[..., None, None] * adjugate_t
+
+
 def det(a):
     a = convert_to_tensor(a)
     # Promote integer and bool inputs to float, matching jax and so the 2x2
@@ -35,10 +58,7 @@ def det(a):
     elif len(a_shape) >= 2 and a_shape[-1] == 3 and a_shape[-2] == 3:
         return _det_3x3(a)
     a, target = lapack_float(a)
-    # The eigenvalue product handles singular matrices naturally.
-    with mx.stream(mx.cpu):
-        w = mx.linalg.eigvals(a)
-    return mx.real(mx.prod(w, axis=-1)).astype(target)
+    return _eigvals_det(a).astype(target)
 
 
 def eig(a):

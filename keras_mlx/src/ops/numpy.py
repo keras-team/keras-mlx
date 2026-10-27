@@ -1636,13 +1636,8 @@ def select(condlist, choicelist, default=0):
     return x
 
 
-def slogdet(x):
-    x = convert_to_tensor(x)
-    # Promote integer and bool inputs to float, matching jax.
-    std = standardize_dtype(x.dtype)
-    if "int" in std or std == "bool":
-        x = x.astype(mx.float32)
-    x, target = lapack_float(x)
+@mx.custom_function
+def _lu_slogdet(x):
     # An exact zero pivot gives sign 0 and log(0) = -inf, which the eigenvalue
     # product cannot, and no complex division is needed.
     with mx.stream(mx.cpu):
@@ -1652,6 +1647,27 @@ def slogdet(x):
     negative = mx.sum(diag < 0, axis=-1) + swaps
     sign = mx.where(mx.all(diag != 0, axis=-1), 1 - 2 * (negative % 2), 0)
     logabsdet = mx.sum(mx.log(mx.abs(diag)), axis=-1)
+    return sign, logabsdet
+
+
+@_lu_slogdet.vjp
+def _lu_slogdet_vjp(primals, cotangents, outputs):
+    # lu_factor has no vjp. The log determinant's gradient is the inverse
+    # transpose. The svd gives nan for a zero matrix like jax, inv gives 0.
+    with mx.stream(mx.cpu):
+        u, s, vt = mx.linalg.svd(primals)
+    inverse_t = mx.matmul(u / s[..., None, :], vt)
+    return cotangents[1][..., None, None] * inverse_t
+
+
+def slogdet(x):
+    x = convert_to_tensor(x)
+    # Promote integer and bool inputs to float, matching jax.
+    std = standardize_dtype(x.dtype)
+    if "int" in std or std == "bool":
+        x = x.astype(mx.float32)
+    x, target = lapack_float(x)
+    sign, logabsdet = _lu_slogdet(x)
     return (sign.astype(target), logabsdet.astype(target))
 
 
