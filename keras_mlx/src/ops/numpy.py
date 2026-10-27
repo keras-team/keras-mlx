@@ -203,6 +203,9 @@ def abs(x):
 
 def all(x, axis=None, keepdims=False):
     x = convert_to_tensor(x)
+    if x.dtype in (mx.int8, mx.uint8):
+        # The Metal reduce treats 1 byte ints as bool.
+        x = x != 0
     return mx.all(x, axis=axis, keepdims=keepdims)
 
 
