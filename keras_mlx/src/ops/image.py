@@ -137,6 +137,9 @@ def hsv_to_rgb(images, data_format=None):
 
 
 def _mirror_index_fixer(index, size):
+    if size == 1:
+        # A size one axis would take a remainder by zero.
+        return mx.zeros_like(index)
     s = size - 1  # Half-wavelength of triangular wave
     # Scaled, integer-valued version of the triangular wave |x - round(x)|
     return mx.abs((index + s) % (2 * s) - s)
