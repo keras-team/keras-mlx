@@ -1437,23 +1437,35 @@ def _flash_attention(query, key, value, bias, mask, is_causal, scale):
     k = mx.swapaxes(key.astype(dtype), 1, 2)
     v = mx.swapaxes(value.astype(dtype), 1, 2)
 
+    user_mask = mask is not None
+    if user_mask:
+        mask = convert_to_tensor(mask).astype(mx.bool_)
     # mlx aligns its "causal" mask to the bottom right and keras to the top
     # left, so the string only fits when the query and key lengths match.
-    square = q.shape[2] == k.shape[2]
-    if bias is None and mask is None and (square or not is_causal):
-        fused_mask = "causal" if is_causal else None
+    T, S = q.shape[2], k.shape[2]
+    if is_causal and (mask is not None or bias is not None or T != S):
+        causal = mx.tril(mx.ones((T, S), dtype=mx.bool_))
+        mask = causal if mask is None else mx.logical_and(mask, causal)
+        is_causal = False
+
+    if bias is not None:
+        # The kernel takes one additive mask, so fold the mask into the bias.
+        fused_mask = convert_to_tensor(bias).astype(dtype)
+        if mask is not None:
+            fused_mask = mx.where(mask, fused_mask, _get_large_negative(dtype))
     else:
-        # The kernel takes one additive mask, so fold the bias and the mask
-        # into the shape the manual path builds its logits in.
-        logits_shape = (q.shape[0], q.shape[1], q.shape[2], k.shape[2])
-        additive = mx.zeros(logits_shape, dtype=mx.float32)
-        if bias is not None:
-            additive = additive + bias
-        fused_mask = _apply_masks(additive, mask, is_causal).astype(dtype)
+        fused_mask = "causal" if is_causal else mask
 
     encoded = mx.fast.scaled_dot_product_attention(
         q, k, v, scale=scale, mask=fused_mask
     )
+    if user_mask:
+        # The Metal kernel zeroes or skews a fully masked row where the manual
+        # path spreads it evenly, so give such rows the mean of the values.
+        mean_v = mx.mean(v.astype(mx.float32), axis=2, keepdims=True)
+        mean_v = mx.repeat(mean_v, q.shape[1] // v.shape[1], axis=1)
+        attended = mx.any(mask, axis=-1, keepdims=True)
+        encoded = mx.where(attended, encoded, mean_v.astype(dtype))
     return mx.swapaxes(encoded, 1, 2).astype(dtype)
 
 
@@ -1468,9 +1480,6 @@ def dot_product_attention(
     flash_attention=None,
     attn_logits_soft_cap=None,
 ):
-    if flash_attention is None:
-        flash_attention = False
-
     query = convert_to_tensor(query)
     key = convert_to_tensor(key)
     value = convert_to_tensor(value)
@@ -1494,17 +1503,26 @@ def dot_product_attention(
                 f"num_query_heads={num_query_heads}, "
                 f"num_key_value_heads={num_kv_heads}."
             )
-        repeats = num_query_heads // num_kv_heads
-        key = mx.repeat(key, repeats, axis=2)
-        value = mx.repeat(value, repeats, axis=2)
 
     H = key.shape[-1]
     # Keep the default a python float, the fused kernel takes a scalar.
     scale = (1.0 / math.sqrt(H)) if scale is None else scale
+    if flash_attention is None:
+        # A bias would be rounded to the input dtype inside the kernel.
+        dtype = result_type(query.dtype, key.dtype, value.dtype)
+        flash_attention = (
+            bias is None
+            and dtype in ("float16", "bfloat16", "float32")
+            and not isinstance(scale, mx.array)
+        )
     if flash_attention:
         return _flash_attention(
             query, key, value, bias, mask, is_causal, float(scale)
         )
+    if num_query_heads != num_kv_heads:
+        repeats = num_query_heads // num_kv_heads
+        key = mx.repeat(key, repeats, axis=2)
+        value = mx.repeat(value, repeats, axis=2)
     return _dot_product_attention(
         query, key, value, bias, mask, is_causal, scale
     )
