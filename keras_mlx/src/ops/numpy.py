@@ -14,6 +14,7 @@ from keras.src.backend.common.backend_utils import vectorize_impl
 from keras_mlx.src.ops.core import cast
 from keras_mlx.src.ops.core import convert_to_tensor
 from keras_mlx.src.ops.core import convert_to_tensors
+from keras_mlx.src.ops.core import int_dtype_of_size
 from keras_mlx.src.ops.core import scatter
 from keras_mlx.src.ops.core import slice
 from keras_mlx.src.ops.core import to_mlx_dtype
@@ -1984,10 +1985,8 @@ def signbit(x):
             # check sign of real part for complex numbers
             real_part = mx.real(x)
             return signbit(real_part)
-        zeros = x == 0
-        # this works because in mlx 1/0=inf and 1/-0=-inf
-        neg_zeros = (1 / x == mx.array(float("-inf"))) & zeros
-        return mx.where(zeros, neg_zeros, x < 0)
+        # Read the sign bit itself, which comparisons miss on -0.0 and -nan.
+        return x.view(int_dtype_of_size(x.dtype)) < 0
     elif x.dtype in (mx.uint8, mx.uint16, mx.uint32, mx.uint64):
         # unsigned integers never negative
         return mx.zeros_like(x).astype(mx.bool_)
