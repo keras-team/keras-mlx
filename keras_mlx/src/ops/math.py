@@ -8,6 +8,7 @@ from keras.src.backend.common import standardize_dtype
 from keras.src.backend.common.backend_utils import canonicalize_axis
 from keras.src.utils.module_utils import scipy
 from keras_mlx.src.ops.core import convert_to_tensor
+from keras_mlx.src.ops.core import int_dtype_of_size
 from keras_mlx.src.ops.core import promote_to_float
 from keras_mlx.src.ops.core import to_mlx_dtype
 
@@ -152,6 +153,13 @@ def top_k(x, k, sorted=True, is_stable=True):
         # Negation wraps unsigned ints and leaves the signed minimum in place,
         # so rank by bitwise not, which reverses the order without overflow.
         ranked = mx.bitwise_invert(x)
+    elif mx.issubdtype(x.dtype, mx.floating):
+        # With negative magnitudes flipped, the int view sorts in IEEE
+        # total order.
+        int_dtype = int_dtype_of_size(x.dtype)
+        bits = x.view(int_dtype)
+        magnitude = mx.array(mx.iinfo(int_dtype).max, dtype=int_dtype)
+        ranked = mx.bitwise_invert(mx.where(bits < 0, bits ^ magnitude, bits))
     else:
         ranked = mx.negative(x)
     if is_stable:

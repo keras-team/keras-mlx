@@ -191,6 +191,10 @@ def promote_to_float(x, *others):
     return cast(x, dtypes.promote_to_float_dtype(x.dtype))
 
 
+def int_dtype_of_size(dtype):
+    return {2: mx.int16, 4: mx.int32, 8: mx.int64}[dtype.size]
+
+
 # Shape / dtype inference util
 def compute_output_spec(fn, *args, **kwargs):
     def has_none_shape(x):
