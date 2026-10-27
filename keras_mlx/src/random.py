@@ -122,6 +122,7 @@ def _get_concrete_noise_shape(inputs, noise_shape):
 
 
 def dropout(inputs, rate, noise_shape=None, seed=None):
+    inputs = convert_to_tensor(inputs)
     if rate == 1.0:
         return mx.zeros_like(inputs)
     if rate == 0.0:
