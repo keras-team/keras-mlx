@@ -590,10 +590,6 @@ def cumprod(x, axis=None, dtype=None):
     # See argsort, an empty input crashes the scan the same way.
     if x.size == 0:
         return mx.reshape(x, (0,)) if axis is None else x
-    if x.dtype in [mx.int64, mx.uint64]:
-        return mx.cumprod(
-            x, axis=axis, stream=mx.Device(type=mx.DeviceType.cpu)
-        )
     return mx.cumprod(x, axis=axis)
 
 
@@ -608,8 +604,6 @@ def cumsum(x, axis=None, dtype=None):
     # See argsort, an empty input crashes the scan the same way.
     if x.size == 0:
         return mx.reshape(x, (0,)) if axis is None else x
-    if x.dtype in [mx.int64, mx.uint64]:
-        return mx.cumsum(x, axis=axis, stream=mx.Device(type=mx.DeviceType.cpu))
     return mx.cumsum(x, axis=axis)
 
 
