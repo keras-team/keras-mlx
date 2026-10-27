@@ -27,8 +27,8 @@ def _segment_reduction_fn(
     else:
         num_segments = int(num_segments)
 
-    mask = segment_ids >= 0
-    # pack segment_ids < 0 into index 0 and then handle below
+    mask = (segment_ids >= 0) & (segment_ids < num_segments)
+    # Pack out of range segment_ids into index 0 and then handle below.
     safe_segment_ids = mx.where(mask, segment_ids, 0)
 
     if not sorted:
