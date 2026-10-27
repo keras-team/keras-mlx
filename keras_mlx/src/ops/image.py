@@ -959,6 +959,18 @@ def perspective_transform(
     if len(end_points.shape) == 2:
         end_points = mx.expand_dims(end_points, axis=0)
 
+    batch_size = images.shape[0]
+    if start_points.shape[0] == 1:
+        start_points = mx.broadcast_to(start_points, (batch_size, 4, 2))
+        end_points = mx.broadcast_to(end_points, (batch_size, 4, 2))
+    elif start_points.shape[0] != batch_size:
+        raise ValueError(
+            "start_points and end_points must hold one set of points, or one "
+            "per image. Received: "
+            f"start_points.shape={start_points.shape}, "
+            f"images.shape={images.shape}"
+        )
+
     if data_format == "channels_first":
         images = mx.transpose(images, (0, 2, 3, 1))
 
