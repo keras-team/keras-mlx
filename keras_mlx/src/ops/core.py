@@ -81,15 +81,6 @@ def convert_to_tensor(x, dtype=None, sparse=None, ragged=None):
         if x.dtype == np.float64:
             # mlx backend does not support float64
             x = x.astype(np.float32)
-        # standardize_dtype was a third of the per batch conversion time.
-        if x.dtype.name == "bfloat16":
-            # mlx currently fails to load a numpy array with dtype=bfloat16
-            # upcast to float32 to avoid error
-            x = x.astype(np.float32)
-            # if a bfloat16 np.ndarray is passed to mx.array with dtype=None
-            # it casts the output to complex64, so we force cast to bfloat16
-            # (but by upcasting we avoid x.dtype=bfloat16 and mlx_dtype=None)
-            mlx_dtype = mx.bfloat16 if mlx_dtype is None else mlx_dtype
         # mlx 0.32 raises on negative stride numpy views like img[..., ::-1].
         # Remove once mlx copies them instead.
         if any(stride < 0 for stride in x.strides):
