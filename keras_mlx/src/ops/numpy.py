@@ -2226,6 +2226,9 @@ def fmod(x1, x2):
     mlx_dtype = _mlx_result_dtype(dtype)
     x1 = x1.astype(mlx_dtype)
     x2 = x2.astype(mlx_dtype)
+    if "int" in dtype:
+        # Divide by one where the divisor is zero, as jax does.
+        x2 = mx.where(x2 == 0, 1, x2)
     if dtype in ("int8", "int16", "int32"):
         # Avoid abs, which wraps for the minimum value, and widening, which
         # int32 has no room for. Shift the mod style remainder back to the sign
