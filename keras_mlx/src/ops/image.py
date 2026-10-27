@@ -1020,19 +1020,17 @@ def gaussian_blur(
             kernel1d = mx.exp(-0.5 * (x / sigma) ** 2)
             return kernel1d / mx.sum(kernel1d)
 
-        def _get_gaussian_kernel2d(size, sigma):
-            kernel1d_height = _get_gaussian_kernel1d(size[0], sigma[0])
-            kernel1d_width = _get_gaussian_kernel1d(size[1], sigma[1])
-            return mx.outer(kernel1d_height, kernel1d_width)
-
-        kernel2d = _get_gaussian_kernel2d(kernel_size, sigma)
-
         # mlx expects kernel with shape (C_out, spatial..., C_in)
-        # for depthwise convolution with groups=C, we need (C, H, W, 1)
-        kernel = kernel2d.reshape(1, kernel_size[0], kernel_size[1], 1)
-        kernel = mx.tile(kernel, (num_channels, 1, 1, 1))
+        kernel_h = _get_gaussian_kernel1d(size=kernel_size[0], sigma=sigma[0])
+        kernel_w = _get_gaussian_kernel1d(size=kernel_size[1], sigma=sigma[1])
+        kernel_h = mx.tile(
+            kernel_h.reshape(1, kernel_size[0], 1, 1), (num_channels, 1, 1, 1)
+        )
+        kernel_w = mx.tile(
+            kernel_w.reshape(1, 1, kernel_size[1], 1), (num_channels, 1, 1, 1)
+        )
 
-        return kernel
+        return kernel_h, kernel_w
 
     if len(images.shape) not in (3, 4):
         raise ValueError(
@@ -1058,19 +1056,31 @@ def gaussian_blur(
 
     # mx.arange can only take integer input values
     kernel_size = tuple(int(k) for k in kernel_size)
-    kernel = _create_gaussian_kernel(kernel_size, sigma, dtype, num_channels)
+    kernel_h, kernel_w = _create_gaussian_kernel(
+        kernel_size, sigma, dtype, num_channels
+    )
 
     # 'same' padding, split asymmetrically so even kernels keep the input size
     # like jax padding='SAME'. mlx conv padding is (low_per_dim, high_per_dim).
     low = ((kernel_size[0] - 1) // 2, (kernel_size[1] - 1) // 2)
     high = (kernel_size[0] // 2, kernel_size[1] // 2)
-    padding = (low, high)
 
+    # The 2D gaussian is separable, so blur one axis at a time.
     blurred_images = mx.conv_general(
         images,
-        kernel,
+        kernel_h,
         stride=1,
-        padding=padding,
+        padding=((low[0], 0), (high[0], 0)),
+        kernel_dilation=1,
+        input_dilation=1,
+        groups=num_channels,
+        flip=False,
+    )
+    blurred_images = mx.conv_general(
+        blurred_images,
+        kernel_w,
+        stride=1,
+        padding=((0, low[1]), (0, high[1])),
         kernel_dilation=1,
         input_dilation=1,
         groups=num_channels,
