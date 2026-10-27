@@ -461,7 +461,7 @@ def while_loop(
     is_tuple = isinstance(loop_vars, (tuple, list))
     loop_vars = tuple(loop_vars) if is_tuple else (loop_vars,)
     loop_vars = tree.map_structure(convert_to_tensor, loop_vars)
-    while cond(*loop_vars) and iteration_check(current_iter):
+    while iteration_check(current_iter) and cond(*loop_vars):
         loop_vars = body(*loop_vars)
         if not isinstance(loop_vars, (list, tuple)):
             loop_vars = (loop_vars,)
