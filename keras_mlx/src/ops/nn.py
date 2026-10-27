@@ -227,7 +227,8 @@ def glu(x, axis=-1):
 
 def hard_tanh(x):
     x = convert_to_tensor(x)
-    return nn.hard_tanh(x)
+    # nn.hard_tanh casts ints to float.
+    return mx.where(x > 1, 1, mx.where(x < -1, -1, x))
 
 
 def hard_shrink(x, threshold=0.5):
