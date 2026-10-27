@@ -144,7 +144,12 @@ def cholesky(a, upper=False):
     # a negative one rather than nan for most such inputs. The comparison
     # also catches nan, since nan > 0 is false.
     diagonal = mx.diagonal(out, axis1=-2, axis2=-1)
-    if not mx.all(diagonal > 0):
+    try:
+        positive = bool(mx.all(diagonal > 0))
+    except ValueError:
+        # Values cannot be read while tracing.
+        positive = True
+    if not positive:
         raise ValueError(
             "Cholesky decomposition failed. The input might not be a valid "
             "positive definite matrix."
