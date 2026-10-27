@@ -1505,9 +1505,7 @@ def inner(x1, x2):
 
 def vstack(xs):
     xs = _promote(*xs)
-    if xs[0].ndim <= 1:
-        xs = [mx.atleast_1d(x)[None] for x in xs]
-    return mx.concatenate(xs, axis=0)
+    return mx.concatenate([mx.atleast_2d(x) for x in xs], axis=0)
 
 
 def where(condition, x1=None, x2=None):
