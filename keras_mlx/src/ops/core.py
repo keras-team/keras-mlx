@@ -275,7 +275,26 @@ def _run_all_branches(branches, select):
                 scope.state_mapping[key] = values[0]
             else:
                 scope.state_mapping[key] = select(*values)
-    return tree.map_structure(select, *outputs, none_is_leaf=False)
+
+    def select_output(*values):
+        # mx.where would broadcast mismatched shapes.
+        specs = [
+            (
+                tuple(getattr(v, "shape", ())),
+                v.dtype if isinstance(v, mx.array) else None,
+            )
+            for v in values
+        ]
+        shapes = {shape for shape, _ in specs}
+        dtypes = {dtype for _, dtype in specs if dtype is not None}
+        if len(shapes) > 1 or len(dtypes) > 1:
+            raise ValueError(
+                "All branches should return outputs of the same kind "
+                f"(struct, dtype and shape). Got {specs} instead."
+            )
+        return select(*values)
+
+    return tree.map_structure(select_output, *outputs, none_is_leaf=False)
 
 
 def cond(pred, true_fn, false_fn):
