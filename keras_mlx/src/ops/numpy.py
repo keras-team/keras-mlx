@@ -1333,6 +1333,9 @@ def roll(x, shift, axis=None):
 
 def sign(x):
     x = convert_to_tensor(x)
+    if mx.issubdtype(x.dtype, mx.floating):
+        # mx.sign maps nan to zero.
+        return mx.where(mx.isnan(x), x, mx.sign(x))
     return mx.sign(x)
 
 
