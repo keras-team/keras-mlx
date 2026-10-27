@@ -213,7 +213,7 @@ def extract_sequences(x, sequence_length, sequence_stride):
     x = convert_to_tensor(x)
 
     *batch_shape, signal_length = x.shape
-    frames = (signal_length - sequence_length) // sequence_stride + 1
+    frames = max((signal_length - sequence_length) // sequence_stride + 1, 0)
     N = python_math.prod(batch_shape)
     x = mx.as_strided(
         x,
