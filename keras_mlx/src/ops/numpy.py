@@ -1215,7 +1215,7 @@ def _quantile(
 
     if nan_aware:
         # An all-nan slice yields nan, matching numpy.
-        gathered = mx.where(counts == 0, _nan_scalar(gathered.dtype), gathered)
+        gathered = mx.where(counts == 0, mx.nan, gathered)
     gathered = gathered.reshape(gathered.shape[:-1] + q_full.shape)
     if not nan_aware:
         # A slice that contains nan yields nan, matching numpy.
@@ -1223,7 +1223,7 @@ def _quantile(
             mx.isnan(x), axis=None if axis is None else tuple(axis)
         )
         nan_members = nan_members.reshape(nan_members.shape + (1,) * q_ndim)
-        gathered = mx.where(nan_members, _nan_scalar(gathered.dtype), gathered)
+        gathered = mx.where(nan_members, mx.nan, gathered)
     return _quantile_restore_shape(gathered, x, q_ndim, axis, keepdims)
 
 
@@ -2495,13 +2495,6 @@ def logaddexp2(x1, x2):
     return mx.logaddexp(x1 * ln2, x2 * ln2) / ln2
 
 
-def _nan_scalar(dtype):
-    # A nan scalar as a materialized array. Baking nan into a fused
-    # kernel as a literal breaks the mlx 0.31 Metal codegen under
-    # mx.compile.
-    return mx.full((), mx.nan, dtype=dtype)
-
-
 def _nan_mask_fill(x, axis, keepdims, fill):
     # Replace nans with a fill value that is neutral for the following
     # reduction and report which slices were all nan.
@@ -2570,7 +2563,7 @@ def nanmax(x, axis=None, keepdims=False):
     axis = _np_axis(axis)
     filled, all_nan = _nan_mask_fill(x, axis, keepdims, -mx.inf)
     result = max(filled, axis=axis, keepdims=keepdims)
-    return mx.where(all_nan, _nan_scalar(result.dtype), result).astype(x.dtype)
+    return mx.where(all_nan, mx.nan, result).astype(x.dtype)
 
 
 def nanmean(x, axis=None, keepdims=False):
@@ -2608,7 +2601,7 @@ def nanmin(x, axis=None, keepdims=False):
     axis = _np_axis(axis)
     filled, all_nan = _nan_mask_fill(x, axis, keepdims, mx.inf)
     result = min(filled, axis=axis, keepdims=keepdims)
-    return mx.where(all_nan, _nan_scalar(result.dtype), result).astype(x.dtype)
+    return mx.where(all_nan, mx.nan, result).astype(x.dtype)
 
 
 def nanpercentile(x, q, axis=None, method="linear", keepdims=False):
@@ -2688,9 +2681,7 @@ def nextafter(x1, x2):
     new_key = key1 + step
     new_bits = mx.where(new_key < 0, int_min - new_key, new_key)
     result = new_bits.astype(int_dtype).view(mlx_dtype)
-    return mx.where(
-        mx.isnan(x1) | mx.isnan(x2), _nan_scalar(result.dtype), result
-    )
+    return mx.where(mx.isnan(x1) | mx.isnan(x2), mx.nan, result)
 
 
 def percentile(x, q, axis=None, method="linear", keepdims=False):
@@ -2871,7 +2862,7 @@ def cov(x):
     dtype = "float64" if dtype == "int64" else result_type(dtype, float)
     result_dtype = _mlx_result_dtype(dtype)
     if x.ndim == 0:
-        return _nan_scalar(result_dtype)
+        return mx.full((), mx.nan, dtype=result_dtype)
     if x.ndim == 1:
         x = mx.expand_dims(x, 0)
     x = x.astype(_mlx_result_dtype(dtypes.result_type(x.dtype, "float32")))
