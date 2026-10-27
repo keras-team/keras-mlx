@@ -959,7 +959,7 @@ def perspective_transform(
     if data_format == "channels_first":
         images = mx.transpose(images, (0, 2, 3, 1))
 
-    batch_size, height, width, channels = images.shape
+    batch_size, height, width, _ = images.shape
 
     transforms = compute_homography_matrix(
         mx.array(start_points, dtype=mx.float32),
@@ -967,40 +967,22 @@ def perspective_transform(
     )
 
     x, y = mx.meshgrid(mx.arange(width), mx.arange(height), indexing="xy")
-    grid = mx.stack(
-        [x.flatten(), y.flatten(), mx.ones_like(x).flatten()], axis=0
+    grid_x = x.reshape(1, -1)
+    grid_y = y.reshape(1, -1)
+    t = [transforms[:, i : i + 1] for i in range(8)]
+
+    denom = t[6] * grid_x + t[7] * grid_y + 1.0
+    x_in = (t[0] * grid_x + t[1] * grid_y + t[2]) / denom
+    y_in = (t[3] * grid_x + t[4] * grid_y + t[5]) / denom
+
+    output = _map_coordinates_batched(
+        images,
+        y_in.reshape(batch_size, height, width, 1),
+        x_in.reshape(batch_size, height, width, 1),
+        order=AFFINE_TRANSFORM_INTERPOLATIONS[interpolation],
+        fill_mode="constant",
+        fill_value=fill_value,
     )
-
-    outputs = []
-    for b in range(batch_size):
-        transform = transforms[b]
-
-        # apply homography to grid coordinates
-        denom = transform[6] * grid[0] + transform[7] * grid[1] + 1.0
-        x_in = (
-            transform[0] * grid[0] + transform[1] * grid[1] + transform[2]
-        ) / denom
-        y_in = (
-            transform[3] * grid[0] + transform[4] * grid[1] + transform[5]
-        ) / denom
-
-        coords = mx.stack([y_in, x_in], axis=0)
-
-        transformed = mx.zeros((height, width, channels), dtype=images.dtype)
-        for c in range(channels):
-            transformed_channel = map_coordinates(
-                images[b, :, :, c],
-                coords,
-                order=AFFINE_TRANSFORM_INTERPOLATIONS[interpolation],
-                fill_mode="constant",
-                fill_value=fill_value,
-            ).reshape(height, width)
-
-            transformed = transformed.at[:, :, c].add(transformed_channel)
-
-        outputs.append(transformed)
-
-    output = mx.stack(outputs, axis=0)
 
     if data_format == "channels_first":
         output = mx.transpose(output, (0, 3, 1, 2))
