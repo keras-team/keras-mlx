@@ -3,6 +3,7 @@ import math
 from copy import copy as builtin_copy
 
 import mlx.core as mx
+import numpy as np
 
 from keras.src.backend import config
 from keras.src.backend.common import dtypes
@@ -1307,11 +1308,11 @@ def repeat(x, repeats, axis=None):
             f"got {repeats.size} vs {x.shape[axis]}"
         )
 
-    # mx.full needs a Python int shape, not a scalar array.
-    indices = mx.concatenate(
-        [mx.full(int(r), i) for i, r in enumerate(repeats)]
+    # Read all counts to the host at once.
+    indices = np.repeat(
+        np.arange(repeats.size, dtype=np.int32), repeats.tolist()
     )
-    return mx.take(x, indices, axis=axis)
+    return mx.take(x, mx.array(indices), axis=axis)
 
 
 def reshape(x, newshape):
