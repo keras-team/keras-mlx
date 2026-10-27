@@ -253,6 +253,31 @@ def compute_output_spec(fn, *args, **kwargs):
     return output_spec
 
 
+def _run_all_branches(branches, select):
+    # MLX has no primitive for data-dependent control flow, so every branch
+    # is evaluated and `select` picks between their outputs.
+    scope = get_stateless_scope()
+    if scope is None:
+        outputs = [branch() for branch in branches]
+    else:
+        # Branches can assign variables, so each runs on its own copy of the
+        # state and the assignments are selected like the outputs.
+        before = scope.state_mapping
+        outputs, states = [], []
+        for branch in branches:
+            scope.state_mapping = dict(before)
+            outputs.append(branch())
+            states.append(scope.state_mapping)
+        scope.state_mapping = dict(before)
+        for key in set().union(*states):
+            values = [state.get(key, before.get(key)) for state in states]
+            if all(value is values[0] for value in values):
+                scope.state_mapping[key] = values[0]
+            else:
+                scope.state_mapping[key] = select(*values)
+    return tree.map_structure(select, *outputs, none_is_leaf=False)
+
+
 def cond(pred, true_fn, false_fn):
     try:
         pred_value = bool(pred)
@@ -265,33 +290,9 @@ def cond(pred, true_fn, false_fn):
         return true_fn() if pred_value else false_fn()
 
     # Forcing `pred` to a concrete bool raised, which means we are being
-    # traced by `mx.compile` or `mx.vmap`. MLX has no primitive for
-    # data-dependent control flow, so both branches are evaluated and their
-    # outputs are selected with `mx.where` instead.
-    scope = get_stateless_scope()
-    if scope is None:
-        true_out = true_fn()
-        false_out = false_fn()
-    else:
-        # Branches can assign variables, so each runs on its own copy of the
-        # state and the assignments are selected like the outputs.
-        before = scope.state_mapping
-        scope.state_mapping = dict(before)
-        true_out = true_fn()
-        true_state = scope.state_mapping
-        scope.state_mapping = dict(before)
-        false_out = false_fn()
-        false_state = scope.state_mapping
-        scope.state_mapping = dict(before)
-        for key in true_state.keys() | false_state.keys():
-            t = true_state.get(key, before.get(key))
-            f = false_state.get(key, before.get(key))
-            scope.state_mapping[key] = t if t is f else mx.where(pred, t, f)
-    return tree.map_structure(
-        lambda t, f: mx.where(pred, t, f),
-        true_out,
-        false_out,
-        none_is_leaf=False,
+    # traced by `mx.compile` or `mx.vmap`.
+    return _run_all_branches(
+        (true_fn, false_fn), lambda t, f: mx.where(pred, t, f)
     )
 
 
@@ -439,9 +440,24 @@ def slice_update(inputs, start_indices, updates):
 
 def switch(index, branches, *operands):
     index = convert_to_tensor(index, "int32")
-    index = mx.clip(index, 0, len(branches) - 1).tolist()
+    index = mx.clip(index, 0, len(branches) - 1)
     operands = tuple(convert_to_tensor(o) for o in operands)
-    return branches[index](*operands)
+    try:
+        index_value = index.item()
+    except ValueError:
+        index_value = None
+    if index_value is not None:
+        return branches[index_value](*operands)
+
+    def select(*values):
+        out = values[0]
+        for i, value in enumerate(values[1:], 1):
+            out = mx.where(index == i, value, out)
+        return out
+
+    return _run_all_branches(
+        [functools.partial(branch, *operands) for branch in branches], select
+    )
 
 
 def while_loop(
