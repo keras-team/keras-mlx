@@ -604,15 +604,6 @@ def dilate(x, axis, dilation_rate):
     return result
 
 
-def _strided_slice_along_axis(x, start, stop, step, axis):
-    # mlx spreads the grad of a one element strided slice over the range.
-    # Remove once the mlx strided slice vjp is fixed.
-    indices = range(x.shape[axis])[start:stop:step]
-    if len(indices) == 1:
-        start, stop, step = indices[0], indices[0] + 1, 1
-    return slice_along_axis(x, start, stop, step=step, axis=axis)
-
-
 def associative_scan(f, elems, reverse=False, axis=0):
     # Ref: jax.lax.associative_scan
     if not callable(f):
@@ -671,9 +662,12 @@ def associative_scan(f, elems, reverse=False, axis=0):
             return elems
 
         reduced_elems = _combine(
-            [_strided_slice_along_axis(elem, 0, -1, 2, axis) for elem in elems],
             [
-                _strided_slice_along_axis(elem, 1, None, 2, axis)
+                slice_along_axis(elem, 0, -1, step=2, axis=axis)
+                for elem in elems
+            ],
+            [
+                slice_along_axis(elem, 1, None, step=2, axis=axis)
                 for elem in elems
             ],
         )
@@ -682,12 +676,18 @@ def associative_scan(f, elems, reverse=False, axis=0):
         if num_elems % 2 == 0:
             even_elems = _combine(
                 [slice_along_axis(e, 0, -1, axis=axis) for e in odd_elems],
-                [_strided_slice_along_axis(e, 2, None, 2, axis) for e in elems],
+                [
+                    slice_along_axis(e, 2, None, step=2, axis=axis)
+                    for e in elems
+                ],
             )
         else:
             even_elems = _combine(
                 odd_elems,
-                [_strided_slice_along_axis(e, 2, None, 2, axis) for e in elems],
+                [
+                    slice_along_axis(e, 2, None, step=2, axis=axis)
+                    for e in elems
+                ],
             )
 
         even_elems = [
