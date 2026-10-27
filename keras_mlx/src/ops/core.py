@@ -320,6 +320,8 @@ def cond(pred, true_fn, false_fn):
 
 
 def vectorized_map(function, elements):
+    # mx.vmap only takes mlx arrays in its input tree.
+    elements = tree.map_structure(convert_to_tensor, elements)
     return mx.vmap(function)(elements)
 
 
