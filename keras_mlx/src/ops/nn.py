@@ -410,8 +410,6 @@ def max_pool(
 def average_pool(
     inputs, pool_size, strides=None, padding="valid", data_format=None
 ):
-    import math
-
     inputs = convert_to_tensor(inputs)
     data_format = standardize_data_format(data_format)
     num_spatial_dims = inputs.ndim - 2
