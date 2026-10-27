@@ -1803,9 +1803,13 @@ def histogram(x, bins=10, range=None):
 
     bin_idx = searchsorted(bin_edges, x, side="right")
     bin_idx = mx.where(x == bin_edges[-1], len(bin_edges) - 1, bin_idx)
+    # Values past the last edge and nan index one past the counts, so clip
+    # them in and give them no weight.
+    bin_idx = mx.clip(bin_idx, 0, len(bin_edges) - 1)
+    in_range = x <= bin_edges[-1]
 
     counts = mx.zeros(len(bin_edges))
-    counts = counts.at[bin_idx].add(mx.ones_like(x))
+    counts = counts.at[bin_idx].add(in_range.astype(counts.dtype))
 
     return counts[1:], bin_edges
 
