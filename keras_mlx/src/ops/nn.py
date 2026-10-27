@@ -783,6 +783,21 @@ def sparse_categorical_crossentropy(target, output, from_logits=False, axis=-1):
             f"target.shape={target.shape}, output.shape={output.shape}"
         )
 
+    # Out of range classes give zero loss, as with a one hot target.
+    valid = (target >= 0) & (target < output.shape[-1])
+    target = mx.where(valid, target, 0)
+
+    # mx.fast.cross_entropy raises on empty logits.
+    if (
+        from_logits
+        and output.dtype in (mx.float16, mx.bfloat16, mx.float32)
+        and output.size > 0
+    ):
+        # Up to mlx 0.32.4 its Metal gradient is wrong for logits that are
+        # not row contiguous.
+        loss = mx.fast.cross_entropy(mx.contiguous(output), target)
+        return mx.where(valid, loss, 0).astype(output.dtype)
+
     if from_logits:
         log_prob = log_softmax(output)
     else:
@@ -790,9 +805,6 @@ def sparse_categorical_crossentropy(target, output, from_logits=False, axis=-1):
         output = mx.minimum(mx.maximum(output, epsilon()), 1 - epsilon())
         log_prob = mx.log(output)
 
-    # Out of range classes give zero loss, as with a one hot target.
-    valid = (target >= 0) & (target < output.shape[-1])
-    target = mx.where(valid, target, 0)
     loss = -mx.take_along_axis(log_prob, target[..., None], axis=-1).squeeze(-1)
     return mx.where(valid, loss, 0)
 
