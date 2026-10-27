@@ -159,6 +159,7 @@ def silu(x):
 
 def squareplus(x, b=4):
     x = convert_to_tensor(x)
+    x = promote_to_float(x)
     b = convert_to_tensor(b, dtype=x.dtype)
     y = x + mx.sqrt(x**2 + b)
     return y / 2
