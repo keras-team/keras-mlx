@@ -428,14 +428,13 @@ def average_pool(
         # the average
         return pooled / math.prod(pool_size)
     else:
-        # Create a tensor of ones of the same shape of inputs.
-        # Then create a pool, padding by zero and using sum as function.
-        # This will create a tensor of the same dimensions as pooled tensor
-        # with values being the sum.
-        # By dividing pooled by windows_counts, we get the average while
-        # skipping the padded values.
+        # The counts do not depend on batch or channels, so pool one of each.
+        if data_format == "channels_first":
+            ones_shape = (1, 1) + inputs.shape[2:]
+        else:
+            ones_shape = (1,) + inputs.shape[1:-1] + (1,)
         window_counts = _pool(
-            mx.ones(inputs.shape, inputs.dtype),
+            mx.ones(ones_shape, inputs.dtype),
             pool_size,
             strides,
             padding,
