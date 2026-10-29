@@ -31,12 +31,6 @@ def _segment_reduction_fn(
     # pack segment_ids < 0 into index 0 and then handle below
     safe_segment_ids = mx.where(mask, segment_ids, 0)
 
-    if not sorted:
-        sort_indices = mx.argsort(safe_segment_ids)
-        safe_segment_ids = mx.take(safe_segment_ids, sort_indices)
-        data = mx.take(data, sort_indices, axis=0)
-        mask = mx.take(mask, sort_indices)
-
     # expand mask dimensions to match data dimensions
     for i in range(1, len(data.shape)):
         mask = mx.expand_dims(mask, axis=i)

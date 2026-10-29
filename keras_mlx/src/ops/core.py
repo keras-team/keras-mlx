@@ -81,15 +81,6 @@ def convert_to_tensor(x, dtype=None, sparse=None, ragged=None):
         if x.dtype == np.float64:
             # mlx backend does not support float64
             x = x.astype(np.float32)
-        # standardize_dtype was a third of the per batch conversion time.
-        if x.dtype.name == "bfloat16":
-            # mlx currently fails to load a numpy array with dtype=bfloat16
-            # upcast to float32 to avoid error
-            x = x.astype(np.float32)
-            # if a bfloat16 np.ndarray is passed to mx.array with dtype=None
-            # it casts the output to complex64, so we force cast to bfloat16
-            # (but by upcasting we avoid x.dtype=bfloat16 and mlx_dtype=None)
-            mlx_dtype = mx.bfloat16 if mlx_dtype is None else mlx_dtype
         # mlx 0.32 raises on negative stride numpy views like img[..., ::-1].
         # Remove once mlx copies them instead.
         if any(stride < 0 for stride in x.strides):
@@ -163,8 +154,6 @@ def convert_to_numpy(x):
             # mlx currently has an error passing bfloat16 array to numpy
             # upcast to float32 then downcast to bfloat16
             return np.array(x.astype(mx.float32)).astype(ml_dtypes.bfloat16)
-        if x.ndim == 0:
-            return np.array(x.item(), dtype=standardize_dtype(x.dtype))
     # np.array evaluates through the buffer protocol, no eval needed.
     return np.array(x)
 
@@ -604,15 +593,6 @@ def dilate(x, axis, dilation_rate):
     return result
 
 
-def _strided_slice_along_axis(x, start, stop, step, axis):
-    # mlx spreads the grad of a one element strided slice over the range.
-    # Remove once the mlx strided slice vjp is fixed.
-    indices = range(x.shape[axis])[start:stop:step]
-    if len(indices) == 1:
-        start, stop, step = indices[0], indices[0] + 1, 1
-    return slice_along_axis(x, start, stop, step=step, axis=axis)
-
-
 def associative_scan(f, elems, reverse=False, axis=0):
     # Ref: jax.lax.associative_scan
     if not callable(f):
@@ -671,9 +651,12 @@ def associative_scan(f, elems, reverse=False, axis=0):
             return elems
 
         reduced_elems = _combine(
-            [_strided_slice_along_axis(elem, 0, -1, 2, axis) for elem in elems],
             [
-                _strided_slice_along_axis(elem, 1, None, 2, axis)
+                slice_along_axis(elem, 0, -1, step=2, axis=axis)
+                for elem in elems
+            ],
+            [
+                slice_along_axis(elem, 1, None, step=2, axis=axis)
                 for elem in elems
             ],
         )
@@ -682,12 +665,18 @@ def associative_scan(f, elems, reverse=False, axis=0):
         if num_elems % 2 == 0:
             even_elems = _combine(
                 [slice_along_axis(e, 0, -1, axis=axis) for e in odd_elems],
-                [_strided_slice_along_axis(e, 2, None, 2, axis) for e in elems],
+                [
+                    slice_along_axis(e, 2, None, step=2, axis=axis)
+                    for e in elems
+                ],
             )
         else:
             even_elems = _combine(
                 odd_elems,
-                [_strided_slice_along_axis(e, 2, None, 2, axis) for e in elems],
+                [
+                    slice_along_axis(e, 2, None, step=2, axis=axis)
+                    for e in elems
+                ],
             )
 
         even_elems = [
