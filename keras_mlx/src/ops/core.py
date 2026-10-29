@@ -180,6 +180,10 @@ def promote_to_float(x, *others):
     return cast(x, dtypes.promote_to_float_dtype(x.dtype))
 
 
+def int_dtype_of_size(dtype):
+    return {2: mx.int16, 4: mx.int32, 8: mx.int64}[dtype.size]
+
+
 # Shape / dtype inference util
 def compute_output_spec(fn, *args, **kwargs):
     def has_none_shape(x):
@@ -242,6 +246,50 @@ def compute_output_spec(fn, *args, **kwargs):
     return output_spec
 
 
+def _run_all_branches(branches, select):
+    # MLX has no primitive for data-dependent control flow, so every branch
+    # is evaluated and `select` picks between their outputs.
+    scope = get_stateless_scope()
+    if scope is None:
+        outputs = [branch() for branch in branches]
+    else:
+        # Branches can assign variables, so each runs on its own copy of the
+        # state and the assignments are selected like the outputs.
+        before = scope.state_mapping
+        outputs, states = [], []
+        for branch in branches:
+            scope.state_mapping = dict(before)
+            outputs.append(branch())
+            states.append(scope.state_mapping)
+        scope.state_mapping = dict(before)
+        for key in set().union(*states):
+            values = [state.get(key, before.get(key)) for state in states]
+            if all(value is values[0] for value in values):
+                scope.state_mapping[key] = values[0]
+            else:
+                scope.state_mapping[key] = select(*values)
+
+    def select_output(*values):
+        # mx.where would broadcast mismatched shapes.
+        specs = [
+            (
+                tuple(getattr(v, "shape", ())),
+                v.dtype if isinstance(v, mx.array) else None,
+            )
+            for v in values
+        ]
+        shapes = {shape for shape, _ in specs}
+        dtypes = {dtype for _, dtype in specs if dtype is not None}
+        if len(shapes) > 1 or len(dtypes) > 1:
+            raise ValueError(
+                "All branches should return outputs of the same kind "
+                f"(struct, dtype and shape). Got {specs} instead."
+            )
+        return select(*values)
+
+    return tree.map_structure(select_output, *outputs, none_is_leaf=False)
+
+
 def cond(pred, true_fn, false_fn):
     try:
         pred_value = bool(pred)
@@ -254,37 +302,15 @@ def cond(pred, true_fn, false_fn):
         return true_fn() if pred_value else false_fn()
 
     # Forcing `pred` to a concrete bool raised, which means we are being
-    # traced by `mx.compile` or `mx.vmap`. MLX has no primitive for
-    # data-dependent control flow, so both branches are evaluated and their
-    # outputs are selected with `mx.where` instead.
-    scope = get_stateless_scope()
-    if scope is None:
-        true_out = true_fn()
-        false_out = false_fn()
-    else:
-        # Branches can assign variables, so each runs on its own copy of the
-        # state and the assignments are selected like the outputs.
-        before = scope.state_mapping
-        scope.state_mapping = dict(before)
-        true_out = true_fn()
-        true_state = scope.state_mapping
-        scope.state_mapping = dict(before)
-        false_out = false_fn()
-        false_state = scope.state_mapping
-        scope.state_mapping = dict(before)
-        for key in true_state.keys() | false_state.keys():
-            t = true_state.get(key, before.get(key))
-            f = false_state.get(key, before.get(key))
-            scope.state_mapping[key] = t if t is f else mx.where(pred, t, f)
-    return tree.map_structure(
-        lambda t, f: mx.where(pred, t, f),
-        true_out,
-        false_out,
-        none_is_leaf=False,
+    # traced by `mx.compile` or `mx.vmap`.
+    return _run_all_branches(
+        (true_fn, false_fn), lambda t, f: mx.where(pred, t, f)
     )
 
 
 def vectorized_map(function, elements):
+    # mx.vmap only takes mlx arrays in its input tree.
+    elements = tree.map_structure(convert_to_tensor, elements)
     return mx.vmap(function)(elements)
 
 
@@ -428,9 +454,24 @@ def slice_update(inputs, start_indices, updates):
 
 def switch(index, branches, *operands):
     index = convert_to_tensor(index, "int32")
-    index = mx.clip(index, 0, len(branches) - 1).tolist()
+    index = mx.clip(index, 0, len(branches) - 1)
     operands = tuple(convert_to_tensor(o) for o in operands)
-    return branches[index](*operands)
+    try:
+        index_value = index.item()
+    except ValueError:
+        index_value = None
+    if index_value is not None:
+        return branches[index_value](*operands)
+
+    def select(*values):
+        out = values[0]
+        for i, value in enumerate(values[1:], 1):
+            out = mx.where(index == i, value, out)
+        return out
+
+    return _run_all_branches(
+        [functools.partial(branch, *operands) for branch in branches], select
+    )
 
 
 def while_loop(
@@ -543,7 +584,22 @@ def scan(f, init, xs=None, length=None, reverse=False, unroll=1):
     init_flat = tree.flatten(init)
     init_flat = [convert_to_tensor(v) for v in init_flat]
     init = pack_output(init_flat)
-    dummy_y = [mx.zeros_like(v) for v in init_flat]
+
+    if n == 0:
+        # Run f once for the shape of ys, discarding state updates.
+        x_slice = [
+            KerasTensor(x.shape[1:], standardize_dtype(x.dtype))
+            for x in xs_flat
+        ]
+        _, y = compute_output_spec(
+            f, init, pack_input(x_slice) if x_slice else None
+        )
+        stacked_y = tree.map_structure(
+            lambda y: mx.zeros((0,) + y.shape, dtype=to_mlx_dtype(y.dtype)),
+            y,
+            none_is_leaf=False,
+        )
+        return init, stacked_y
 
     carry = init
     ys = []
@@ -552,16 +608,9 @@ def scan(f, init, xs=None, length=None, reverse=False, unroll=1):
         xs_slice = [x[i] for x in xs_unstacked]
         packed_xs = pack_input(xs_slice) if len(xs_slice) > 0 else None
         carry, y = f(carry, packed_xs)
-        ys.append(y if y is not None else dummy_y)
-    if not ys:
-        # A zero-length scan returns the carry and empty leading-dim stacks.
-        stacked_y = tree.map_structure(
-            lambda y: mx.zeros((0,) + y.shape, dtype=y.dtype),
-            pack_output(dummy_y),
-        )
-        return carry, stacked_y
+        ys.append(y)
     stacked_y = tree.map_structure(
-        lambda *ys: mx.stack(ys), *maybe_reversed(ys)
+        lambda *ys: mx.stack(ys), *maybe_reversed(ys), none_is_leaf=False
     )
     return carry, stacked_y
 

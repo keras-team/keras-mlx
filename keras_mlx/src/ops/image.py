@@ -137,6 +137,9 @@ def hsv_to_rgb(images, data_format=None):
 
 
 def _mirror_index_fixer(index, size):
+    if size == 1:
+        # A size one axis would take a remainder by zero.
+        return mx.zeros_like(index)
     s = size - 1  # Half-wavelength of triangular wave
     # Scaled, integer-valued version of the triangular wave |x - round(x)|
     return mx.abs((index + s) % (2 * s) - s)
@@ -945,6 +948,18 @@ def perspective_transform(
         start_points = mx.expand_dims(start_points, axis=0)
     if len(end_points.shape) == 2:
         end_points = mx.expand_dims(end_points, axis=0)
+
+    batch_size = images.shape[0]
+    if start_points.shape[0] == 1:
+        start_points = mx.broadcast_to(start_points, (batch_size, 4, 2))
+        end_points = mx.broadcast_to(end_points, (batch_size, 4, 2))
+    elif start_points.shape[0] != batch_size:
+        raise ValueError(
+            "start_points and end_points must hold one set of points, or one "
+            "per image. Received: "
+            f"start_points.shape={start_points.shape}, "
+            f"images.shape={images.shape}"
+        )
 
     if data_format == "channels_first":
         images = mx.transpose(images, (0, 2, 3, 1))

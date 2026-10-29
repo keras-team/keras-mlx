@@ -15,6 +15,8 @@ from keras.src.backend.common.backend_utils import vectorize_impl
 from keras_mlx.src.ops.core import cast
 from keras_mlx.src.ops.core import convert_to_tensor
 from keras_mlx.src.ops.core import convert_to_tensors
+from keras_mlx.src.ops.core import int_dtype_of_size
+from keras_mlx.src.ops.core import scatter
 from keras_mlx.src.ops.core import slice
 from keras_mlx.src.ops.core import to_mlx_dtype
 
@@ -202,6 +204,9 @@ def abs(x):
 
 def all(x, axis=None, keepdims=False):
     x = convert_to_tensor(x)
+    if x.dtype in (mx.int8, mx.uint8):
+        # The Metal reduce treats 1 byte ints as bool.
+        x = x != 0
     return mx.all(x, axis=axis, keepdims=keepdims)
 
 
@@ -436,20 +441,6 @@ def right_shift(x, y):
     return bitwise_right_shift(x, y)
 
 
-def _bincount_1d(x, weights=None, minlength=0):
-    x_max = mx.max(x)
-    # The length is data dependent, and mx.zeros needs a Python int shape.
-    length = int(mx.maximum(x_max + 1, minlength))
-
-    counts = mx.zeros(length)
-    if weights is None:
-        counts = counts.at[x].add(1)
-    else:
-        counts = counts.at[x].add(weights)
-
-    return counts
-
-
 def bincount(x, weights=None, minlength=0, sparse=False):
     if sparse:
         raise ValueError("Unsupported value `sparse=True` with mlx backend")
@@ -469,15 +460,20 @@ def bincount(x, weights=None, minlength=0, sparse=False):
         dtype = "int32"
     mlx_dtype = to_mlx_dtype(dtype)
 
-    if len(x.shape) == 2:
-        batch_size = x.shape[0]
-        results = []
-        for i in range(batch_size):
-            w = None if weights is None else weights[i]
-            results.append(_bincount_1d(x[i], w, minlength))
-        return mx.stack(results).astype(mlx_dtype)
+    # The length is data dependent, and mx.zeros needs a Python int shape.
+    length = minlength
+    if x.size > 0:
+        length = builtins.max(int(mx.max(x)) + 1, minlength)
+    if weights is None:
+        updates = mx.ones(x.shape, dtype=mlx_dtype)
+    else:
+        updates = weights.astype(mlx_dtype)
 
-    return _bincount_1d(x, weights, minlength).astype(mlx_dtype)
+    if len(x.shape) == 2:
+        rows = mx.broadcast_to(mx.arange(x.shape[0])[:, None], x.shape)
+        indices = mx.stack([rows, x.astype(mx.int32)], axis=-1)
+        return scatter(indices, updates, (x.shape[0], length))
+    return scatter(x[:, None], updates, (length,))
 
 
 def broadcast_to(x, shape):
@@ -1313,6 +1309,9 @@ def roll(x, shift, axis=None):
 
 def sign(x):
     x = convert_to_tensor(x)
+    if mx.issubdtype(x.dtype, mx.floating):
+        # mx.sign maps nan to zero.
+        return mx.where(mx.isnan(x), x, mx.sign(x))
     return mx.sign(x)
 
 
@@ -1486,9 +1485,7 @@ def inner(x1, x2):
 
 def vstack(xs):
     xs = _promote(*xs)
-    if xs[0].ndim <= 1:
-        xs = [mx.atleast_1d(x)[None] for x in xs]
-    return mx.concatenate(xs, axis=0)
+    return mx.concatenate([mx.atleast_2d(x) for x in xs], axis=0)
 
 
 def where(condition, x1=None, x2=None):
@@ -1773,9 +1770,13 @@ def histogram(x, bins=10, range=None):
 
     bin_idx = searchsorted(bin_edges, x, side="right")
     bin_idx = mx.where(x == bin_edges[-1], len(bin_edges) - 1, bin_idx)
+    # Values past the last edge and nan index one past the counts, so clip
+    # them in and give them no weight.
+    bin_idx = mx.clip(bin_idx, 0, len(bin_edges) - 1)
+    in_range = x <= bin_edges[-1]
 
     counts = mx.zeros(len(bin_edges))
-    counts = counts.at[bin_idx].add(mx.ones_like(x))
+    counts = counts.at[bin_idx].add(in_range.astype(counts.dtype))
 
     return counts[1:], bin_edges
 
@@ -1957,10 +1958,8 @@ def signbit(x):
             # check sign of real part for complex numbers
             real_part = mx.real(x)
             return signbit(real_part)
-        zeros = x == 0
-        # this works because in mlx 1/0=inf and 1/-0=-inf
-        neg_zeros = (1 / x == mx.array(float("-inf"))) & zeros
-        return mx.where(zeros, neg_zeros, x < 0)
+        # Read the sign bit itself, which comparisons miss on -0.0 and -nan.
+        return x.view(int_dtype_of_size(x.dtype)) < 0
     elif x.dtype in (mx.uint8, mx.uint16, mx.uint32, mx.uint64):
         # unsigned integers never negative
         return mx.zeros_like(x).astype(mx.bool_)
@@ -2199,6 +2198,9 @@ def fmod(x1, x2):
     mlx_dtype = _mlx_result_dtype(dtype)
     x1 = x1.astype(mlx_dtype)
     x2 = x2.astype(mlx_dtype)
+    if "int" in dtype:
+        # Divide by one where the divisor is zero, as jax does.
+        x2 = mx.where(x2 == 0, 1, x2)
     if dtype in ("int8", "int16", "int32"):
         # Avoid abs, which wraps for the minimum value, and widening, which
         # int32 has no room for. Shift the mod style remainder back to the sign
@@ -2256,11 +2258,6 @@ def geomspace(start, stop, num=50, endpoint=True, dtype=None, axis=0):
     common_shape = mx.broadcast_shapes(start.shape, stop.shape)
     start = mx.broadcast_to(start, common_shape)
     stop = mx.broadcast_to(stop, common_shape)
-    if bool(mx.any(start == 0)) or bool(mx.any(stop == 0)):
-        raise ValueError(
-            "Geometric sequence cannot include zero. "
-            f"Received: start={start}, stop={stop}"
-        )
     num = int(num)
     # Interpolate linearly in log space, using the sign of start so that
     # all negative sequences work.
@@ -2299,7 +2296,7 @@ def hanning(x):
 def heaviside(x1, x2):
     x1, x2 = _promote(x1, x2)
     dtype = result_type(x1.dtype, x2.dtype)
-    if dtype in ("int8", "int16", "int32", "uint8", "uint16", "uint32"):
+    if dtype in ("bool", "int8", "int16", "int32", "uint8", "uint16", "uint32"):
         dtype = config.floatx()
     elif dtype == "int64":
         dtype = "float64"
@@ -2740,6 +2737,33 @@ def trapezoid(y, x=None, dx=1.0, axis=-1):
 
 # The sorted argument is accepted for API consistency but not forwarded,
 # the implementation always returns sorted unique values.
+def _unique_sized(
+    x, size, return_index, return_inverse, return_counts, fill_value
+):
+    # Asking for at least x.size entries keeps the inverse untruncated.
+    stream = mx.cpu if x.dtype == mx.bool_ else mx.default_device()
+    outputs = mx.unique(
+        x,
+        size=builtins.max(size, x.size),
+        return_index=return_index,
+        return_inverse=return_inverse,
+        return_counts=return_counts,
+        fill_value=fill_value,
+        stream=stream,
+    )
+    if not isinstance(outputs, tuple):
+        return outputs[:size]
+    outputs = list(outputs)
+    outputs[0] = outputs[0][:size]
+    if return_index:
+        outputs[1] = outputs[1][:size].astype(mx.int32)
+    if return_inverse:
+        outputs[1 + return_index] = outputs[1 + return_index].astype(mx.int32)
+    if return_counts:
+        outputs[-1] = outputs[-1][:size]
+    return tuple(outputs)
+
+
 def unique(
     x,
     sorted=True,
@@ -2751,6 +2775,10 @@ def unique(
     fill_value=None,
 ):
     x = convert_to_tensor(x)
+    if size is not None and axis is None:
+        return _unique_sized(
+            x, size, return_index, return_inverse, return_counts, fill_value
+        )
     if axis is None:
         dim = 0
         flat = x.reshape(-1)

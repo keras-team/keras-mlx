@@ -158,6 +158,7 @@ def silu(x):
 
 def squareplus(x, b=4):
     x = convert_to_tensor(x)
+    x = promote_to_float(x)
     b = convert_to_tensor(b, dtype=x.dtype)
     y = x + mx.sqrt(x**2 + b)
     return y / 2
@@ -225,7 +226,8 @@ def glu(x, axis=-1):
 
 def hard_tanh(x):
     x = convert_to_tensor(x)
-    return nn.hard_tanh(x)
+    # nn.hard_tanh casts ints to float.
+    return mx.where(x > 1, 1, mx.where(x < -1, -1, x))
 
 
 def hard_shrink(x, threshold=0.5):
@@ -788,7 +790,11 @@ def sparse_categorical_crossentropy(target, output, from_logits=False, axis=-1):
         output = mx.minimum(mx.maximum(output, epsilon()), 1 - epsilon())
         log_prob = mx.log(output)
 
-    return -mx.take_along_axis(log_prob, target[..., None], axis=-1).squeeze(-1)
+    # Out of range classes give zero loss, as with a one hot target.
+    valid = (target >= 0) & (target < output.shape[-1])
+    target = mx.where(valid, target, 0)
+    loss = -mx.take_along_axis(log_prob, target[..., None], axis=-1).squeeze(-1)
+    return mx.where(valid, loss, 0)
 
 
 def binary_crossentropy(target, output, from_logits=False):
@@ -1431,7 +1437,10 @@ def _flash_attention(query, key, value, bias, mask, is_causal, scale):
     k = mx.swapaxes(key.astype(dtype), 1, 2)
     v = mx.swapaxes(value.astype(dtype), 1, 2)
 
-    if bias is None and mask is None:
+    # mlx aligns its "causal" mask to the bottom right and keras to the top
+    # left, so the string only fits when the query and key lengths match.
+    square = q.shape[2] == k.shape[2]
+    if bias is None and mask is None and (square or not is_causal):
         fused_mask = "causal" if is_causal else None
     else:
         # The kernel takes one additive mask, so fold the bias and the mask

@@ -8,7 +8,9 @@ from keras.src.backend.common import standardize_dtype
 from keras.src.backend.common.backend_utils import canonicalize_axis
 from keras.src.utils.module_utils import scipy
 from keras_mlx.src.ops.core import convert_to_tensor
+from keras_mlx.src.ops.core import int_dtype_of_size
 from keras_mlx.src.ops.core import promote_to_float
+from keras_mlx.src.ops.core import scatter_update
 from keras_mlx.src.ops.core import to_mlx_dtype
 
 
@@ -18,17 +20,13 @@ def _segment_reduction_fn(
     data = convert_to_tensor(data)
     segment_ids = convert_to_tensor(segment_ids)
 
-    if data.dtype == mx.int64:
-        # GPU scatter does not yet support int64 for the input or updates.
-        data = data.astype(mx.int32)
-
     if num_segments is None:
         num_segments = int(mx.max(segment_ids).item()) + 1
     else:
         num_segments = int(num_segments)
 
-    mask = segment_ids >= 0
-    # pack segment_ids < 0 into index 0 and then handle below
+    mask = (segment_ids >= 0) & (segment_ids < num_segments)
+    # Pack out of range segment_ids into index 0 and then handle below.
     safe_segment_ids = mx.where(mask, segment_ids, 0)
 
     # expand mask dimensions to match data dimensions
@@ -40,6 +38,7 @@ def _segment_reduction_fn(
 
     is_int = "int" in standardize_dtype(data.dtype)
 
+    ids = safe_segment_ids[:, None]
     if reduction_method == "max":
         # -inf overflows when cast to an integer dtype, so use the dtype min.
         fill = (
@@ -47,20 +46,20 @@ def _segment_reduction_fn(
         )
         masked_data = mx.where(mask, data, fill)
         result = mx.full(data_shape, fill, dtype=data.dtype)
-        result = result.at[safe_segment_ids].maximum(masked_data)
+        result = scatter_update(result, ids, masked_data, "max")
     elif reduction_method == "min":
         fill = np.iinfo(standardize_dtype(data.dtype)).max if is_int else mx.inf
         masked_data = mx.where(mask, data, fill)
         result = mx.full(data_shape, fill, dtype=data.dtype)
-        result = result.at[safe_segment_ids].minimum(masked_data)
+        result = scatter_update(result, ids, masked_data, "min")
     elif reduction_method == "prod":
         masked_data = mx.where(mask, data, 1)
         result = mx.ones(data_shape, dtype=data.dtype)
-        result = result.at[safe_segment_ids].multiply(masked_data)
+        result = scatter_update(result, ids, masked_data, "mul")
     else:  # sum
         masked_data = mx.where(mask, data, 0)
         result = mx.zeros(data_shape, dtype=data.dtype)
-        result = result.at[safe_segment_ids].add(masked_data)
+        result = scatter_update(result, ids, masked_data, "add")
 
     return result
 
@@ -146,6 +145,13 @@ def top_k(x, k, sorted=True, is_stable=True):
         # Negation wraps unsigned ints and leaves the signed minimum in place,
         # so rank by bitwise not, which reverses the order without overflow.
         ranked = mx.bitwise_invert(x)
+    elif mx.issubdtype(x.dtype, mx.floating):
+        # With negative magnitudes flipped, the int view sorts in IEEE
+        # total order.
+        int_dtype = int_dtype_of_size(x.dtype)
+        bits = x.view(int_dtype)
+        magnitude = mx.array(mx.iinfo(int_dtype).max, dtype=int_dtype)
+        ranked = mx.bitwise_invert(mx.where(bits < 0, bits ^ magnitude, bits))
     else:
         ranked = mx.negative(x)
     if is_stable:
@@ -199,7 +205,7 @@ def extract_sequences(x, sequence_length, sequence_stride):
     x = convert_to_tensor(x)
 
     *batch_shape, signal_length = x.shape
-    frames = (signal_length - sequence_length) // sequence_stride + 1
+    frames = max((signal_length - sequence_length) // sequence_stride + 1, 0)
     N = python_math.prod(batch_shape)
     x = mx.as_strided(
         x,
