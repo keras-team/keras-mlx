@@ -949,7 +949,7 @@ def perspective_transform(
     if data_format == "channels_first":
         images = mx.transpose(images, (0, 2, 3, 1))
 
-    batch_size, height, width, channels = images.shape
+    batch_size, height, width, _ = images.shape
 
     transforms = compute_homography_matrix(
         mx.array(start_points, dtype=mx.float32),
@@ -957,40 +957,22 @@ def perspective_transform(
     )
 
     x, y = mx.meshgrid(mx.arange(width), mx.arange(height), indexing="xy")
-    grid = mx.stack(
-        [x.flatten(), y.flatten(), mx.ones_like(x).flatten()], axis=0
+    grid_x = x.reshape(1, -1)
+    grid_y = y.reshape(1, -1)
+    t = [transforms[:, i : i + 1] for i in range(8)]
+
+    denom = t[6] * grid_x + t[7] * grid_y + 1.0
+    x_in = (t[0] * grid_x + t[1] * grid_y + t[2]) / denom
+    y_in = (t[3] * grid_x + t[4] * grid_y + t[5]) / denom
+
+    output = _map_coordinates_batched(
+        images,
+        y_in.reshape(batch_size, height, width, 1),
+        x_in.reshape(batch_size, height, width, 1),
+        order=AFFINE_TRANSFORM_INTERPOLATIONS[interpolation],
+        fill_mode="constant",
+        fill_value=fill_value,
     )
-
-    outputs = []
-    for b in range(batch_size):
-        transform = transforms[b]
-
-        # apply homography to grid coordinates
-        denom = transform[6] * grid[0] + transform[7] * grid[1] + 1.0
-        x_in = (
-            transform[0] * grid[0] + transform[1] * grid[1] + transform[2]
-        ) / denom
-        y_in = (
-            transform[3] * grid[0] + transform[4] * grid[1] + transform[5]
-        ) / denom
-
-        coords = mx.stack([y_in, x_in], axis=0)
-
-        transformed = mx.zeros((height, width, channels), dtype=images.dtype)
-        for c in range(channels):
-            transformed_channel = map_coordinates(
-                images[b, :, :, c],
-                coords,
-                order=AFFINE_TRANSFORM_INTERPOLATIONS[interpolation],
-                fill_mode="constant",
-                fill_value=fill_value,
-            ).reshape(height, width)
-
-            transformed = transformed.at[:, :, c].add(transformed_channel)
-
-        outputs.append(transformed)
-
-    output = mx.stack(outputs, axis=0)
 
     if data_format == "channels_first":
         output = mx.transpose(output, (0, 3, 1, 2))
@@ -1010,19 +992,17 @@ def gaussian_blur(
             kernel1d = mx.exp(-0.5 * (x / sigma) ** 2)
             return kernel1d / mx.sum(kernel1d)
 
-        def _get_gaussian_kernel2d(size, sigma):
-            kernel1d_height = _get_gaussian_kernel1d(size[0], sigma[0])
-            kernel1d_width = _get_gaussian_kernel1d(size[1], sigma[1])
-            return mx.outer(kernel1d_height, kernel1d_width)
-
-        kernel2d = _get_gaussian_kernel2d(kernel_size, sigma)
-
         # mlx expects kernel with shape (C_out, spatial..., C_in)
-        # for depthwise convolution with groups=C, we need (C, H, W, 1)
-        kernel = kernel2d.reshape(1, kernel_size[0], kernel_size[1], 1)
-        kernel = mx.tile(kernel, (num_channels, 1, 1, 1))
+        kernel_h = _get_gaussian_kernel1d(size=kernel_size[0], sigma=sigma[0])
+        kernel_w = _get_gaussian_kernel1d(size=kernel_size[1], sigma=sigma[1])
+        kernel_h = mx.tile(
+            kernel_h.reshape(1, kernel_size[0], 1, 1), (num_channels, 1, 1, 1)
+        )
+        kernel_w = mx.tile(
+            kernel_w.reshape(1, 1, kernel_size[1], 1), (num_channels, 1, 1, 1)
+        )
 
-        return kernel
+        return kernel_h, kernel_w
 
     if len(images.shape) not in (3, 4):
         raise ValueError(
@@ -1048,19 +1028,31 @@ def gaussian_blur(
 
     # mx.arange can only take integer input values
     kernel_size = tuple(int(k) for k in kernel_size)
-    kernel = _create_gaussian_kernel(kernel_size, sigma, dtype, num_channels)
+    kernel_h, kernel_w = _create_gaussian_kernel(
+        kernel_size, sigma, dtype, num_channels
+    )
 
     # 'same' padding, split asymmetrically so even kernels keep the input size
     # like jax padding='SAME'. mlx conv padding is (low_per_dim, high_per_dim).
     low = ((kernel_size[0] - 1) // 2, (kernel_size[1] - 1) // 2)
     high = (kernel_size[0] // 2, kernel_size[1] // 2)
-    padding = (low, high)
 
+    # The 2D gaussian is separable, so blur one axis at a time.
     blurred_images = mx.conv_general(
         images,
-        kernel,
+        kernel_h,
         stride=1,
-        padding=padding,
+        padding=((low[0], 0), (high[0], 0)),
+        kernel_dilation=1,
+        input_dilation=1,
+        groups=num_channels,
+        flip=False,
+    )
+    blurred_images = mx.conv_general(
+        blurred_images,
+        kernel_w,
+        stride=1,
+        padding=((0, low[1]), (0, high[1])),
         kernel_dilation=1,
         input_dilation=1,
         groups=num_channels,
@@ -1119,10 +1111,10 @@ def elastic_transform(
         need_squeeze = True
 
     if data_format == "channels_last":
-        batch_size, height, width, channels = images.shape
+        batch_size, height, width, _ = images.shape
         channel_axis = -1
     else:
-        batch_size, channels, height, width = images.shape
+        batch_size, _, height, width = images.shape
         channel_axis = 1
 
     # jax uses the same seed for both dx and dy, so mirror that for parity.
@@ -1169,39 +1161,18 @@ def elastic_transform(
     distorted_x = x + alpha * dx
     distorted_y = y + alpha * dy
 
-    transformed_images = mx.zeros_like(images)
-    if data_format == "channels_last":
-        for i in range(channels):
-            transformed_channel = []
-            for b in range(batch_size):
-                transformed_channel.append(
-                    map_coordinates(
-                        images[b, :, :, i],
-                        [distorted_y[b], distorted_x[b]],
-                        order=AFFINE_TRANSFORM_INTERPOLATIONS[interpolation],
-                        fill_mode=fill_mode,
-                        fill_value=fill_value,
-                    )
-                )
-            transformed_images = transformed_images.at[:, :, :, i].add(
-                mx.stack(transformed_channel)
-            )
-    else:  # channels_first
-        for i in range(channels):
-            transformed_channel = []
-            for b in range(batch_size):
-                transformed_channel.append(
-                    map_coordinates(
-                        images[b, i, :, :],
-                        [distorted_y[b], distorted_x[b]],
-                        order=AFFINE_TRANSFORM_INTERPOLATIONS[interpolation],
-                        fill_mode=fill_mode,
-                        fill_value=fill_value,
-                    )
-                )
-            transformed_images = transformed_images.at[:, i, :, :].add(
-                mx.stack(transformed_channel)
-            )
+    if data_format == "channels_first":
+        images = mx.transpose(images, (0, 2, 3, 1))
+    transformed_images = _map_coordinates_batched(
+        images,
+        mx.expand_dims(distorted_y, axis=-1),
+        mx.expand_dims(distorted_x, axis=-1),
+        order=AFFINE_TRANSFORM_INTERPOLATIONS[interpolation],
+        fill_mode=fill_mode,
+        fill_value=fill_value,
+    )
+    if data_format == "channels_first":
+        transformed_images = mx.transpose(transformed_images, (0, 3, 1, 2))
 
     if need_squeeze:
         transformed_images = mx.squeeze(transformed_images, axis=0)

@@ -124,9 +124,9 @@ def svd(x, full_matrices=True, compute_uv=True):
     # Ints and bools are not accepted by the mlx kernels, so promote like jax.
     x = promote_to_float(x)
     with mx.stream(mx.cpu):
-        u, s, vt = mx.linalg.svd(x)
         if not compute_uv:
-            return s
+            return mx.linalg.svd(x, compute_uv=False)
+        u, s, vt = mx.linalg.svd(x)
         if not full_matrices:
             n = min(x.shape[-2:])
             return u[..., :n], s, vt[..., :n, :]

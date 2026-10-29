@@ -3,6 +3,7 @@ import math
 from copy import copy as builtin_copy
 
 import mlx.core as mx
+import numpy as np
 
 from keras.src.backend import config
 from keras.src.backend.common import dtypes
@@ -1286,11 +1287,11 @@ def repeat(x, repeats, axis=None):
             f"got {repeats.size} vs {x.shape[axis]}"
         )
 
-    # mx.full needs a Python int shape, not a scalar array.
-    indices = mx.concatenate(
-        [mx.full(int(r), i) for i, r in enumerate(repeats)]
+    # Read all counts to the host at once.
+    indices = np.repeat(
+        np.arange(repeats.size, dtype=np.int32), repeats.tolist()
     )
-    return mx.take(x, indices, axis=axis)
+    return mx.take(x, mx.array(indices), axis=axis)
 
 
 def reshape(x, newshape):
@@ -1622,16 +1623,10 @@ def floor_divide(x1, x2):
     x1 = convert_to_tensor(x1, dtype=dtype)
     x2 = convert_to_tensor(x2, dtype=dtype)
     if "int" in standardize_dtype(dtype):
-        # An integer divide by zero traps in hardware and takes the process
-        # down with SIGFPE, so divide by one wherever the divisor is zero and
-        # select the answer back out afterwards. numpy returns zero there.
+        # The Metal kernel has no zero check.
         zero = x2 == 0
         divisor = mx.where(zero, mx.ones_like(x2), x2)
-        # mlx `//` truncates toward zero for integers, so correct the quotient
-        # down by one when the remainder forces a floor toward -inf.
         q = x1 // divisor
-        r = x1 - q * divisor
-        q = mx.where((r != 0) & ((r < 0) != (divisor < 0)), q - 1, q)
         return mx.where(zero, mx.zeros_like(q), q)
     # Subtracting the remainder leaves an exact multiple of x2, so the quotient
     # cannot round up across an integer (4.2 / 1.4 gives 3 in float32).
