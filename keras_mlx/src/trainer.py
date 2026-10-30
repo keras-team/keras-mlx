@@ -3,12 +3,15 @@ import warnings
 
 import mlx.core as mx
 import numpy as np
+from mlx.nn import average_gradients
 
 from keras.src import callbacks as callbacks_module
 from keras.src import optimizers as optimizers_module
 from keras.src import tree
 from keras.src.backend import config
 from keras.src.backend.common.stateless_scope import StatelessScope
+from keras.src.distribution.distribution_lib import DataParallel
+from keras.src.distribution.distribution_lib import distribution
 from keras.src.trainers.data_adapters import array_slicing
 from keras.src.trainers.data_adapters import data_adapter_utils
 from keras.src.trainers.epoch_iterator import EpochIterator
@@ -18,6 +21,21 @@ from keras.src.utils.python_utils import pythonify_logs
 from keras_mlx.src.ops.core import convert_to_numpy
 from keras_mlx.src.ops.core import convert_to_tensor
 from keras_mlx.src.random import tracing_compiled_step
+
+
+def _replica_group():
+    """Return the process group when training data parallel, else `None`."""
+    dist = distribution()
+    if dist is None:
+        return None
+    if not isinstance(dist, DataParallel):
+        raise NotImplementedError(
+            "The MLX backend only supports `keras.distribution.DataParallel`. "
+            f"Received: distribution={dist}"
+        )
+    if dist.num_processes == 1:
+        return None
+    return mx.distributed.init()
 
 
 def _with_tracing_flag(step):
@@ -235,6 +253,7 @@ class Trainer(BaseTrainer):
         ) = state
         x, y, sample_weight = data_adapter_utils.unpack_x_y_sample_weight(data)
         grad_fn = mx.value_and_grad(self.compute_loss_and_updates)
+        group = _replica_group()
 
         if trainable_variables:
             (
@@ -256,6 +275,8 @@ class Trainer(BaseTrainer):
                 training=True,
                 optimizer_variables=optimizer_variables,
             )
+            if group is not None:
+                grads = average_gradients(grads, group)
 
             (
                 trainable_variables,
@@ -280,6 +301,21 @@ class Trainer(BaseTrainer):
                 training=True,
                 optimizer_variables=optimizer_variables,
             )
+
+        if group is not None:
+            # Average the float state, like the BatchNormalization moving
+            # mean, so the replicas stay equal.
+            floats = [
+                i
+                for i, v in enumerate(non_trainable_variables)
+                if mx.issubdtype(v.dtype, mx.floating)
+            ]
+            averaged = average_gradients(
+                [non_trainable_variables[i] for i in floats], group
+            )
+            non_trainable_variables = list(non_trainable_variables)
+            for i, value in zip(floats, averaged):
+                non_trainable_variables[i] = value
 
         logs, metrics_variables = self._update_metrics_variables(
             metrics_variables, unscaled_loss, x, y, y_pred, sample_weight
@@ -338,6 +374,34 @@ class Trainer(BaseTrainer):
             trainable_variables, non_trainable_variables, x, **kwargs
         )
         return outputs, (trainable_variables, non_trainable_variables)
+
+    def get_metrics_result(self):
+        group = _replica_group()
+        if group is None:
+            return super().get_metrics_result()
+        # Metric state is a sum over samples, so add up every replica's.
+        values = [
+            mx.distributed.all_sum(v.value, group=group)
+            for v in self.metrics_variables
+        ]
+        with StatelessScope(
+            state_mapping=list(zip(self.metrics_variables, values))
+        ):
+            return super().get_metrics_result()
+
+    def _broadcast_weights(self):
+        # Start every replica from the weights of process 0. MLX has no
+        # broadcast, so sum process 0's values with zeros from the others.
+        group = _replica_group()
+        if group is None:
+            return
+        keep = group.rank() == 0
+        for v in self.trainable_variables + self.non_trainable_variables:
+            # Sum bools as integers.
+            value = v.value.astype(mx.int32) if v.dtype == "bool" else v.value
+            value = value if keep else mx.zeros_like(value)
+            value = mx.distributed.all_sum(value, group=group)
+            v.assign(value.astype(v.value.dtype))
 
     def _make_function(self, step_function, concatenate_outputs=False):
         if self.steps_per_execution > 1:
@@ -405,6 +469,7 @@ class Trainer(BaseTrainer):
         self._eval_captured_arrays()
         if self.train_function is not None and not force:
             return
+        self._broadcast_weights()
         if not self.run_eagerly and self.jit_compile:
             train_step = mx.compile(_with_tracing_flag(self.train_step))
         else:
