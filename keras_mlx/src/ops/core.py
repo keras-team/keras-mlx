@@ -93,7 +93,18 @@ def convert_to_tensor(x, dtype=None, sparse=None, ragged=None):
             standardize_dtype(x.dtype)
             raise
 
-    if isinstance(x, list):
+    if isinstance(x, (list, tuple)):
+        # mx.array rejects Variables and numpy arrays inside a list, so
+        # convert those elements first.
+        try:
+            return mx.array(x, dtype=mlx_dtype)
+        except ValueError:
+            pass
+        scalars = (int, float, complex)
+        x = [
+            e if isinstance(e, scalars) else convert_to_tensor(e, dtype=dtype)
+            for e in x
+        ]
         return mx.array(x, dtype=mlx_dtype)
 
     if _is_h5py_dataset(x):

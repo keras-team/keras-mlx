@@ -1581,8 +1581,6 @@ def var(x, axis=None, keepdims=False):
 
 
 def sum(x, axis=None, keepdims=False):
-    if isinstance(x, (list, tuple)):
-        x = stack(x)
     x = convert_to_tensor(x)
     if x.ndim == 0:
         # mlx widens n-d small ints but keeps the dtype of a 0-d input.
