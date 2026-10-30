@@ -673,11 +673,11 @@ def _scale_and_translate(
     w_mats = {}
     for i, d in enumerate(spatial_dims):
         if d == 1:  # height dimension
-            w_mats[d] = _compute_weight_mat(
+            w_mats[d] = _cached_weight_mat(
                 H_in, H_out, scale[i], translation[i], kernel, antialias
             )
         elif d == 2:  # width dimension
-            w_mats[d] = _compute_weight_mat(
+            w_mats[d] = _cached_weight_mat(
                 W_in, W_out, scale[i], translation[i], kernel, antialias
             )
         else:
@@ -729,6 +729,18 @@ def _compute_weight_mat(
         weights,
         0,
     )
+
+
+@functools.lru_cache(maxsize=128)
+def _cached_weight_mat(
+    input_size, output_size, scale, translation, kernel, antialias
+):
+    # Sizes repeat call after call, so build each matrix once and keep it.
+    weights = _compute_weight_mat(
+        input_size, output_size, scale, translation, kernel, antialias
+    )
+    mx.eval(weights)
+    return weights
 
 
 SCALE_AND_TRANSLATE_METHODS = {
