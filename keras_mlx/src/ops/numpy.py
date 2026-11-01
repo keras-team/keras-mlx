@@ -1974,33 +1974,15 @@ def signbit(x):
 
 
 def bartlett(x):
-    # ref: jax.numpy.bartlett
-    dtype = to_mlx_dtype(config.floatx())
-    # The window length must be a Python int, mx.ones and mx.arange do not
-    # accept scalar arrays for it.
-    x = int(x)
-    if x <= 1:
-        return mx.ones(x, dtype=dtype)
-
-    n = mx.arange(x, dtype=dtype)
-    return 1 - mx.abs(2 * n + 1 - x) / (x - 1)
+    # The window length must be a Python int, mx.bartlett does not accept
+    # scalar arrays for it.
+    return mx.bartlett(int(x)).astype(to_mlx_dtype(config.floatx()))
 
 
 def blackman(x):
-    # ref: jax.numpy.blackman
-    dtype = to_mlx_dtype(config.floatx())
-    # The window length must be a Python int, mx.ones and mx.arange do not
-    # accept scalar arrays for it.
-    x = int(x)
-    if x <= 1:
-        return mx.ones(x, dtype=dtype)
-
-    n = mx.arange(x, dtype=dtype)
-    return (
-        0.42
-        - 0.5 * mx.cos(2 * mx.pi * n / (x - 1))
-        + 0.08 * mx.cos(4 * mx.pi * n / (x - 1))
-    )
+    # The window length must be a Python int, mx.blackman does not accept
+    # scalar arrays for it.
+    return mx.blackman(int(x)).astype(to_mlx_dtype(config.floatx()))
 
 
 def angle(x):
@@ -2054,10 +2036,11 @@ def array_split(x, indices_or_sections, axis=0):
     if axis < 0:
         axis += x.ndim
     if isinstance(indices_or_sections, int):
+        # Read the size first so a bad axis raises like numpy.
+        size = x.shape[axis]
         n = indices_or_sections
         if n == 1:
             return [x]
-        size = x.shape[axis]
         each, rem = divmod(size, n)
         split_points = []
         pos = 0
