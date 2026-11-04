@@ -2498,7 +2498,9 @@ def _nanvar_compute(x, axis, keepdims):
     counts = mx.sum(
         mx.logical_not(nan_mask).astype(x.dtype), axis=axis, keepdims=True
     )
-    means = mx.sum(mx.where(nan_mask, 0, x), axis=axis, keepdims=True) / counts
+    # Mask before the arithmetic so a nan cannot reach the gradient.
+    x = mx.where(nan_mask, 0, x)
+    means = mx.sum(x, axis=axis, keepdims=True) / counts
     squares = mx.where(nan_mask, 0, mx.square(x - means))
     result = mx.sum(squares, axis=axis, keepdims=True) / counts
     if not keepdims:
