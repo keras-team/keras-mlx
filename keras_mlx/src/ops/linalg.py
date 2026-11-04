@@ -5,6 +5,7 @@ from keras.src import tree
 from keras.src.backend.common import result_type
 from keras.src.backend.common import standardize_dtype
 from keras_mlx.src.ops.core import convert_to_tensor
+from keras_mlx.src.ops.core import lapack_float
 from keras_mlx.src.ops.core import promote_to_float
 
 
@@ -33,11 +34,7 @@ def det(a):
         return _det_2x2(a)
     elif len(a_shape) >= 2 and a_shape[-1] == 3 and a_shape[-2] == 3:
         return _det_3x3(a)
-    # The mlx lapack kernels take float32 and float64 but reject the half
-    # precision types, so compute those in float32 and cast back.
-    target = a.dtype
-    if a.dtype in (mx.bfloat16, mx.float16):
-        a = a.astype(mx.float32)
+    a, target = lapack_float(a)
     # The eigenvalue product handles singular matrices naturally.
     with mx.stream(mx.cpu):
         w = mx.linalg.eigvals(a)
@@ -162,11 +159,7 @@ def norm(x, ord=None, axis=None, keepdims=False):
     if "int" in dtype or dtype == "bool":
         dtype = result_type(x.dtype, "float32")
     x = convert_to_tensor(x, dtype=dtype)
-    # mlx linalg kernels do not support half precision, compute in float32 and
-    # cast back to the input dtype.
-    result_dtype = x.dtype
-    if x.dtype in (mx.bfloat16, mx.float16):
-        x = x.astype(mx.float32)
+    x, result_dtype = lapack_float(x)
     # Singular value matrix norms are svd-based, which is CPU-only in mlx.
     if isinstance(axis, (tuple, list)):
         is_matrix_norm = True
@@ -269,12 +262,7 @@ def matrix_power(a, n):
 def pinv(x, rcond=None):
     x = convert_to_tensor(x)
     # Ints and bools are not accepted by the mlx kernels, so promote like jax.
-    x = promote_to_float(x)
-    target = x.dtype
-    # The mlx lapack kernels reject the half precision types, so compute
-    # those in float32 and cast back.
-    if x.dtype in (mx.bfloat16, mx.float16):
-        x = x.astype(mx.float32)
+    x, target = lapack_float(promote_to_float(x))
     if rcond is None:
         with mx.stream(mx.cpu):
             return mx.linalg.pinv(x).astype(target)
@@ -298,10 +286,7 @@ def matrix_rank(x, tol=None):
     # Promote integer and bool inputs to float, matching jax.
     x = promote_to_float(x)
     std = standardize_dtype(x.dtype)
-    # The mlx svd kernel rejects the half precision types, so those compute
-    # in float32. float64 goes through as is.
-    if x.dtype in (mx.bfloat16, mx.float16):
-        x = x.astype(mx.float32)
+    x, _ = lapack_float(x)
     s = svd(x, compute_uv=False)
     if tol is None:
         # eps of the INPUT dtype, not the compute one. Widening a half

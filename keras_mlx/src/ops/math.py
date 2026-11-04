@@ -326,6 +326,23 @@ def _stft(x, window, nperseg, noverlap, nfft, axis=-1):
     return result
 
 
+def _padded_window(window, sequence_length, l_pad, r_pad, dtype):
+    if window is None:
+        return mx.ones(sequence_length + l_pad + r_pad, dtype=dtype)
+    if isinstance(window, str):
+        # scipy's window matches the jax precision.
+        win = scipy.signal.get_window(window, sequence_length)
+    else:
+        win = window
+    win = convert_to_tensor(win, dtype=dtype)
+    if len(win.shape) != 1 or win.shape[-1] != sequence_length:
+        raise ValueError(
+            "The shape of `window` must be equal to (sequence_length,). "
+            f"Received: window shape={win.shape}"
+        )
+    return mx.pad(win, [[l_pad, r_pad]])
+
+
 def stft(
     x, sequence_length, sequence_stride, fft_length, window="hann", center=True
 ):
@@ -355,22 +372,7 @@ def stft(
     l_pad = (fft_length - sequence_length) // 2
     r_pad = fft_length - sequence_length - l_pad
 
-    if window is not None:
-        if isinstance(window, str):
-            # use scipy window for now to match precision with jax
-            win = convert_to_tensor(
-                scipy.signal.get_window(window, sequence_length), dtype=x.dtype
-            )
-        else:
-            win = convert_to_tensor(window, dtype=x.dtype)
-        if len(win.shape) != 1 or win.shape[-1] != sequence_length:
-            raise ValueError(
-                "The shape of `window` must be equal to [sequence_length]."
-                f"Received: window shape={win.shape}"
-            )
-        win = mx.pad(win, [[l_pad, r_pad]])
-    else:
-        win = mx.ones((sequence_length + l_pad + r_pad), dtype=x.dtype)
+    win = _padded_window(window, sequence_length, l_pad, r_pad, x.dtype)
 
     result = _stft(
         x,
@@ -514,21 +516,7 @@ def istft(
     l_pad = (fft_length - sequence_length) // 2
     r_pad = fft_length - sequence_length - l_pad
 
-    if window is not None:
-        if isinstance(window, str):
-            win = convert_to_tensor(
-                scipy.signal.get_window(window, sequence_length), dtype=dtype
-            )
-        else:
-            win = convert_to_tensor(window, dtype=dtype)
-        if len(win.shape) != 1 or win.shape[-1] != sequence_length:
-            raise ValueError(
-                "The shape of `window` must be equal to [sequence_length]."
-                f"Received: window shape={win.shape}"
-            )
-        win = mx.pad(win, [[l_pad, r_pad]])
-    else:
-        win = mx.ones((sequence_length + l_pad + r_pad), dtype=dtype)
+    win = _padded_window(window, sequence_length, l_pad, r_pad, dtype)
 
     x = _istft(
         x,
