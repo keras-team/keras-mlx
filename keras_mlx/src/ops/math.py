@@ -208,8 +208,9 @@ def extract_sequences(x, sequence_length, sequence_stride):
     *batch_shape, signal_length = x.shape
     frames = max((signal_length - sequence_length) // sequence_stride + 1, 0)
     N = python_math.prod(batch_shape)
+    # mlx as_strided only flattens a strided view, remove once it copies it.
     x = mx.as_strided(
-        x,
+        mx.contiguous(x),
         shape=(N, frames, sequence_length),
         strides=(signal_length, sequence_stride, 1),
     )

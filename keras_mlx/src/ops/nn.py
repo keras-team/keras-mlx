@@ -362,7 +362,8 @@ def _sliding_windows(x, window_shape, window_strides):
     final_strides += strides[1:-1]
     final_strides += strides[-1:]  # should always be [1]
 
-    return mx.as_strided(x, final_shape, final_strides)
+    # mlx as_strided only flattens a strided view, remove once it copies it.
+    return mx.as_strided(mx.contiguous(x), final_shape, final_strides)
 
 
 def _pool(
