@@ -236,6 +236,9 @@ def sparsemax(x, axis=-1):
     logits = convert_to_tensor(x)
     # Ints can't hold the fractional results or, if unsigned, the -1 bound.
     logits = promote_to_float(logits)
+    # mlx gathers out of bounds from an empty axis, a segfault on macOS CPU.
+    if logits.size == 0:
+        return logits
     logits_sorted = -mx.sort(-logits, axis=axis)
     logits_cumsum = mx.cumsum(logits_sorted, axis=axis)  # find cumulative sum
     r = mx.arange(1, logits.shape[axis] + 1)  # Determine the sparsity

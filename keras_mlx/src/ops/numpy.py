@@ -1084,7 +1084,9 @@ def _quantile_flatten_axis(x, axis):
     other_dims = sorted(set(range(x.ndim)).difference(axis))
     perm = other_dims + list(axis)
     other_shape = [x.shape[i] for i in other_dims]
-    return mx.transpose(x, perm).reshape(other_shape + [-1]), axis
+    # mlx cannot infer a -1 dimension of an empty array.
+    size = math.prod(x.shape[i] for i in axis)
+    return mx.transpose(x, perm).reshape(other_shape + [size]), axis
 
 
 def _quantile(
@@ -1093,6 +1095,13 @@ def _quantile(
     # Ported from the tf backend. Nans sort last, so per slice valid counts
     # index the right values. Index math is float32 since Metal has no
     # float64, so it is exact below 2**24.
+    if _reduces_empty_axis(x.shape, axis):
+        # jax raises too. mlx gathers out of bounds from an empty axis, which
+        # returns garbage on linux and segfaults on the macOS CPU stream.
+        raise ValueError(
+            "Cannot compute a quantile over an empty axis. "
+            f"Received: x.shape={tuple(x.shape)}, axis={axis}"
+        )
     if axis is not None and not isinstance(axis, (tuple, list)):
         axis = [axis]
     q_full = convert_to_tensor(q, dtype="float32")
@@ -2468,12 +2477,6 @@ def nanmean(x, axis=None, keepdims=False):
 
 
 def nanmedian(x, axis=None, keepdims=False):
-    x = convert_to_tensor(x)
-    empty_shape = _empty_result_shape(x, axis, keepdims)
-    if empty_shape is not None:
-        # mlx cannot reshape an empty array, so build the empty result.
-        dtype = to_mlx_dtype(dtypes.promote_to_float_dtype(x.dtype))
-        return mx.zeros(empty_shape, dtype)
     return nanquantile(x, 0.5, axis=axis, keepdims=keepdims)
 
 
