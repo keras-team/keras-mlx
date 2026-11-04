@@ -1366,6 +1366,10 @@ def tensordot(x1, x2, axes=2):
 
 def round(x, decimals=0):
     x = convert_to_tensor(x)
+    if decimals and x.dtype == mx.float16:
+        # Scale in float32 like jax, the scaled value can overflow float16.
+        rounded = mx.round(x.astype(mx.float32), decimals=decimals)
+        return rounded.astype(x.dtype)
     return mx.round(x, decimals=decimals)
 
 
