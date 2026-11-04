@@ -165,11 +165,9 @@ def elu(x, alpha=1.0):
     # exp branch like jax.
     xneg = mx.minimum(0, x)
     xpos = mx.maximum(x, 0)
-    if alpha != 1:
-        xneg = alpha * (mx.exp(xneg) - 1)
-    else:
-        xneg = mx.exp(xneg) - 1
-    return xneg + xpos
+    # mx.expm1 is within ~35 ulp on Metal for x <= 0. The expm1 op is tighter
+    # but its select doubles the eager and grad time.
+    return alpha * mx.expm1(xneg) + xpos
 
 
 def selu(x):
@@ -179,7 +177,7 @@ def selu(x):
     # As in elu, x == 0 takes the exp branch.
     xneg = mx.minimum(0, x)
     xpos = mx.maximum(x, 0)
-    return scale * (xpos + alpha * (mx.exp(xneg) - 1))
+    return scale * (xpos + alpha * mx.expm1(xneg))
 
 
 def gelu(x, approximate=True):
