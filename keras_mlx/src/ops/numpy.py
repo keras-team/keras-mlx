@@ -1959,7 +1959,9 @@ def signbit(x):
             real_part = mx.real(x)
             return signbit(real_part)
         # Read the sign bit itself, which comparisons miss on -0.0 and -nan.
-        return x.view(int_dtype_of_size(x.dtype)) < 0
+        # View has no vjp, and the sign bit carries no gradient anyway.
+        bits = mx.stop_gradient(x).view(int_dtype_of_size(x.dtype))
+        return bits < 0
     elif x.dtype in (mx.uint8, mx.uint16, mx.uint32, mx.uint64):
         # unsigned integers never negative
         return mx.zeros_like(x).astype(mx.bool_)
