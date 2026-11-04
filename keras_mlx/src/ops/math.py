@@ -326,33 +326,6 @@ def _stft(x, window, nperseg, noverlap, nfft, axis=-1):
     return result
 
 
-def _reflect_pad(x, pad_width, axis=-1):
-    left_pad, right_pad = pad_width
-
-    if left_pad > 0:
-        # A reversed arange view breaks the gather grad on Metal.
-        indices = mx.arange(left_pad, 0, -1, dtype=mx.int32)
-        prefix = mx.take(x, indices, axis=axis)
-    else:
-        prefix = None
-
-    if right_pad > 0:
-        indices = mx.arange(
-            x.shape[axis] - 2, x.shape[axis] - right_pad - 2, -1, dtype=mx.int32
-        )
-        suffix = mx.take(x, indices, axis=axis)
-    else:
-        suffix = None
-
-    if prefix is not None and suffix is not None:
-        return mx.concatenate([prefix, x, suffix], axis=axis)
-    elif prefix is not None:
-        return mx.concatenate([prefix, x], axis=axis)
-    elif suffix is not None:
-        return mx.concatenate([x, suffix], axis=axis)
-    return x
-
-
 def stft(
     x, sequence_length, sequence_stride, fft_length, window="hann", center=True
 ):
@@ -376,8 +349,8 @@ def stft(
     x = convert_to_tensor(x)
 
     if center:
-        pad_width = (fft_length // 2, fft_length // 2)
-        x = _reflect_pad(x, pad_width)
+        widths = [(0, 0)] * (x.ndim - 1) + [(fft_length // 2, fft_length // 2)]
+        x = mx.pad(x, widths, mode="reflect")
 
     l_pad = (fft_length - sequence_length) // 2
     r_pad = fft_length - sequence_length - l_pad

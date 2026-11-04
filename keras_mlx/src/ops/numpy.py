@@ -17,7 +17,6 @@ from keras_mlx.src.ops.core import convert_to_tensor
 from keras_mlx.src.ops.core import convert_to_tensors
 from keras_mlx.src.ops.core import int_dtype_of_size
 from keras_mlx.src.ops.core import scatter
-from keras_mlx.src.ops.core import slice
 from keras_mlx.src.ops.core import to_mlx_dtype
 
 
@@ -546,7 +545,7 @@ def cosh(x):
 
 def count_nonzero(x, axis=None):
     x = convert_to_tensor(x)
-    return (x != 0).astype(mx.int32).sum(axis=axis)
+    return mx.count_nonzero(x, axis=axis)
 
 
 def cross(x1, x2, axisa=-1, axisb=-1, axisc=-1, axis=None):
@@ -605,19 +604,7 @@ def diff(a, n=1, axis=-1):
     a = convert_to_tensor(a)
     if n <= 0:
         return a
-
-    if axis < 0:
-        axis = a.ndim + axis
-
-    start1 = [0] * a.ndim
-    start2 = [0] * a.ndim
-    shape = list(a.shape)
-    shape[axis] -= 1
-
-    start1[axis] = 1
-    out = slice(a, start1, shape) - slice(a, start2, shape)
-
-    return diff(out, n - 1, axis) if n > 1 else out
+    return mx.diff(a, n=n, axis=axis)
 
 
 def digitize(x, bins):
@@ -1080,10 +1067,7 @@ def ones_like(x, dtype=None):
 
 def outer(x1, x2):
     x1, x2 = _promote(x1, x2)
-    x1 = x1.reshape(-1)
-    x2 = x2.reshape(-1)
-
-    return x1[:, None] * x2[None, :]
+    return mx.outer(x1, x2)
 
 
 def pad(x, pad_width, mode="constant", constant_values=None):
@@ -1457,10 +1441,7 @@ def triu(x, k=0):
 
 def trunc(x):
     x = convert_to_tensor(x)
-    dtype = standardize_dtype(x.dtype)
-    if "int" in dtype or "bool" == dtype:
-        return x
-    return mx.where(x < 0, mx.ceil(x), mx.floor(x))
+    return mx.trunc(x)
 
 
 def vdot(x1, x2):
@@ -2114,22 +2095,12 @@ def dsplit(x, indices_or_sections):
     return split(x, indices_or_sections, axis=2)
 
 
-def _atleast_3d(x):
-    if x.ndim == 0:
-        return x.reshape(1, 1, 1)
-    if x.ndim == 1:
-        return x.reshape(1, x.shape[0], 1)
-    if x.ndim == 2:
-        return x.reshape(x.shape[0], x.shape[1], 1)
-    return x
-
-
 def dstack(xs):
     xs = [convert_to_tensor(x) for x in xs]
     dtype = _mlx_result_dtype(
         result_type(*[standardize_dtype(x.dtype) for x in xs])
     )
-    xs = [_atleast_3d(x).astype(dtype) for x in xs]
+    xs = [mx.atleast_3d(x).astype(dtype) for x in xs]
     return mx.concatenate(xs, axis=2)
 
 
