@@ -274,6 +274,8 @@ def arctanh(x):
 
 def argmax(x, axis=None, keepdims=False):
     x = convert_to_tensor(x)
+    # mlx errors on keepdims with a 0-d input, jax returns a 0-d index.
+    keepdims = keepdims and x.ndim > 0
     # mlx rejects empty input, but jax returns an empty result here.
     empty_shape = _empty_result_shape(x, axis, keepdims)
     if empty_shape is not None:
@@ -286,6 +288,7 @@ def argmax(x, axis=None, keepdims=False):
 
 def argmin(x, axis=None, keepdims=False):
     x = convert_to_tensor(x)
+    keepdims = keepdims and x.ndim > 0
     empty_shape = _empty_result_shape(x, axis, keepdims)
     if empty_shape is not None:
         return mx.zeros(empty_shape, mx.int32)
