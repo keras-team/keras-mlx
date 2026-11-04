@@ -9,12 +9,12 @@ import mlx.nn as nn
 from keras.src.backend.common import is_float_dtype
 from keras.src.backend.common import result_type
 from keras.src.backend.common import standardize_dtype
-from keras.src.backend.common.backend_utils import (
-    _convert_conv_transpose_padding_args_from_keras_to_jax,
-)
 from keras.src.backend.common.backend_utils import canonicalize_axis
 from keras.src.backend.common.backend_utils import (
     compute_adaptive_pooling_window_sizes,
+)
+from keras.src.backend.common.backend_utils import (
+    compute_conv_transpose_padding_args_for_jax,
 )
 from keras.src.backend.config import epsilon
 from keras.src.backend.config import floatx
@@ -55,34 +55,6 @@ def compute_conv_padding_args_for_mlx(
         return (start_paddings, end_paddings)
     else:
         raise ValueError(f"Invalid padding value: {padding}")
-
-
-def compute_conv_transpose_padding_args_for_mlx(
-    padding,
-    num_spatial_dims,
-    kernel_spatial_shape,
-    dilation_rate,
-    strides,
-    output_padding,
-):
-    # The per-dimension padding is the same as for jax. mlx only differs in how
-    # the paddings are packaged, as separate start and end lists.
-    start_paddings = []
-    end_paddings = []
-    for i in range(num_spatial_dims):
-        output_padding_i = None if output_padding is None else output_padding[i]
-        pad_left, pad_right = (
-            _convert_conv_transpose_padding_args_from_keras_to_jax(
-                kernel_size=kernel_spatial_shape[i],
-                stride=strides[i],
-                dilation_rate=dilation_rate[i],
-                padding=padding,
-                output_padding=output_padding_i,
-            )
-        )
-        start_paddings.append(pad_left)
-        end_paddings.append(pad_right)
-    return (start_paddings, end_paddings)
 
 
 def relu(x):
@@ -656,10 +628,16 @@ def conv_transpose(
     dilation_rate = standardize_tuple(
         dilation_rate, num_spatial_dims, "dilation_rate"
     )
-    if output_padding is not None:
-        output_padding = standardize_tuple(
-            output_padding, num_spatial_dims, "output_padding"
-        )
+    padding_values = compute_conv_transpose_padding_args_for_jax(
+        input_shape=inputs.shape,
+        kernel_shape=kernel.shape,
+        strides=strides,
+        padding=padding,
+        output_padding=output_padding,
+        dilation_rate=dilation_rate,
+    )
+    # mlx takes the jax paddings as separate start and end lists.
+    mlx_padding = tuple(zip(*padding_values))
 
     if data_format == "channels_first":
         # mlx expects channels_last
@@ -667,16 +645,6 @@ def conv_transpose(
 
     # mlx expects kernel with (out_channels, spatial..., in_channels)
     kernel = kernel.transpose(-2, *range(kernel.ndim - 2), -1)
-    kernel_spatial_shape = kernel.shape[1:-1]
-
-    mlx_padding = compute_conv_transpose_padding_args_for_mlx(
-        padding,
-        num_spatial_dims,
-        kernel_spatial_shape,
-        dilation_rate,
-        strides,
-        output_padding,
-    )
 
     channels = inputs.shape[-1]
     kernel_in_channels = kernel.shape[-1]
