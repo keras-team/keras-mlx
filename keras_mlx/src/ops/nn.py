@@ -1627,8 +1627,8 @@ def _compute_adaptive_pooling_gather_indices(
 
 
 def _strided_view_1d(x, window_size):
-    # Sliding windows of `window_size` over axis 1, gathered explicitly since
-    # mlx has no stride-trick view. Returns (n, out, window_size, c).
+    # Sliding windows of `window_size` over axis 1, gathered because
+    # mx.as_strided has no vmap. Returns (n, out, window_size, c).
     _, length, _ = x.shape
     out = length - window_size + 1
     idx = mx.arange(out)[:, None] + mx.arange(window_size)[None, :]

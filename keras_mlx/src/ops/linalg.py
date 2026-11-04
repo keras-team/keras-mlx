@@ -72,8 +72,7 @@ def solve(a, b):
     if vector_rhs:
         b = mx.expand_dims(b, axis=-1)
     with mx.stream(mx.cpu):
-        # [linalg::solve] This op is not yet supported on the GPU.
-        # Explicitly pass a CPU stream to run it.
+        # This op is not yet supported on the GPU.
         x = mx.linalg.solve(a, b)
     return mx.squeeze(x, axis=-1) if vector_rhs else x
 
@@ -177,10 +176,6 @@ def norm(x, ord=None, axis=None, keepdims=False):
         # Match the other backends, which raise a ValueError for an invalid
         # axis instead of mlx's IndexError.
         raise ValueError(str(e)) from e
-    if keepdims and axis is None and output.ndim != x.ndim:
-        # mlx flattens the input when axis is None and ord is None, losing
-        # the dimensions that numpy keeps with keepdims.
-        output = output.reshape((1,) * x.ndim)
     return output.astype(result_dtype)
 
 

@@ -27,8 +27,8 @@ def _result_dtype(*xs):
 
 
 def _promote(*xs):
-    # mlx promotes uint32 + signed to int32, keras/jax want int64. Cast to
-    # result_type so the output dtype matches the other backends.
+    # mlx promotes 64-bit ints and uint32 with a signed int to 64-bit, while the
+    # keras lattice gives int32 or uint32. Cast to result_type to follow it.
     dtype = _result_dtype(*xs)
     return [convert_to_tensor(x, dtype) for x in xs]
 
@@ -200,7 +200,6 @@ def absolute(x):
 
 
 def abs(x):
-    x = convert_to_tensor(x)
     return absolute(x)
 
 
@@ -509,7 +508,6 @@ def conjugate(x):
 
 
 def conj(x):
-    x = convert_to_tensor(x)
     return conjugate(x)
 
 
@@ -885,9 +883,6 @@ def maximum(x1, x2):
 
 
 def median(x, axis=None, keepdims=False):
-    # mlx's median axis must be an int, a sequence of ints, or None.
-    if isinstance(axis, list):
-        axis = tuple(axis)
     x = convert_to_tensor(x)
     result_dtype = result_type(x.dtype, float)
     x = x.astype(_mlx_result_dtype(result_dtype))
@@ -1549,14 +1544,6 @@ def sum(x, axis=None, keepdims=False):
 
 
 def eye(N, M=None, k=0, dtype=None):
-    # mlx silently converts a float-valued 0-d array to int, numpy raises.
-    for arg in (N, M):
-        arg_dtype = getattr(arg, "dtype", None)
-        if arg_dtype is not None and "float" in standardize_dtype(arg_dtype):
-            raise TypeError(
-                f"Argument to `eye` must be an integer, received dtype "
-                f"{standardize_dtype(arg_dtype)}."
-            )
     dtype = to_mlx_dtype(dtype or config.floatx())
     M = N if M is None else M
     k = 0 if k is None else k
@@ -1828,9 +1815,7 @@ def searchsorted(sorted_sequence, values, side="left"):
     sorted_size = sorted_sequence.size
     search_size = values.size
 
-    # TODO: swap to mlx implementation if exists in the future
-    # current implementation and search choice based on discussion:
-    # https://github.com/ml-explore/mlx/issues/1255
+    # mx.searchsorted cannot vmap over the sorted sequence, so search here.
     use_linear = sorted_size <= 1024 or (
         sorted_size <= 16384 and search_size <= 256
     )
@@ -2092,12 +2077,10 @@ def fabs(x):
 
 
 def fliplr(x):
-    x = convert_to_tensor(x)
     return flip(x, axis=1)
 
 
 def flipud(x):
-    x = convert_to_tensor(x)
     return flip(x, axis=0)
 
 
@@ -2654,8 +2637,6 @@ def trapezoid(y, x=None, dx=1.0, axis=-1):
     return mx.sum(averages * deltas, axis=-1)
 
 
-# The sorted argument is accepted for API consistency but not forwarded,
-# the implementation always returns sorted unique values.
 def _unique_sized(
     x, size, return_index, return_inverse, return_counts, fill_value
 ):
@@ -2693,6 +2674,7 @@ def unique(
     size=None,
     fill_value=None,
 ):
+    # sorted is ignored, the values always come back sorted.
     x = convert_to_tensor(x)
     if size is not None and axis is None:
         return _unique_sized(

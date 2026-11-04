@@ -14,9 +14,7 @@ from keras_mlx.src.ops.core import scatter_update
 from keras_mlx.src.ops.core import to_mlx_dtype
 
 
-def _segment_reduction_fn(
-    data, segment_ids, reduction_method, num_segments, sorted
-):
+def _segment_reduction_fn(data, segment_ids, reduction_method, num_segments):
     data = convert_to_tensor(data)
     segment_ids = convert_to_tensor(segment_ids)
 
@@ -65,21 +63,19 @@ def _segment_reduction_fn(
 
 
 def segment_sum(data, segment_ids, num_segments=None, sorted=False):
-    return _segment_reduction_fn(data, segment_ids, "sum", num_segments, sorted)
+    return _segment_reduction_fn(data, segment_ids, "sum", num_segments)
 
 
 def segment_max(data, segment_ids, num_segments=None, sorted=False):
-    return _segment_reduction_fn(data, segment_ids, "max", num_segments, sorted)
+    return _segment_reduction_fn(data, segment_ids, "max", num_segments)
 
 
 def segment_min(data, segment_ids, num_segments=None, sorted=False):
-    return _segment_reduction_fn(data, segment_ids, "min", num_segments, sorted)
+    return _segment_reduction_fn(data, segment_ids, "min", num_segments)
 
 
 def segment_prod(data, segment_ids, num_segments=None, sorted=False):
-    return _segment_reduction_fn(
-        data, segment_ids, "prod", num_segments, sorted
-    )
+    return _segment_reduction_fn(data, segment_ids, "prod", num_segments)
 
 
 def cdist(x, y):
