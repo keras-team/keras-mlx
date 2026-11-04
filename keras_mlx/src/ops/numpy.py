@@ -2033,8 +2033,8 @@ def corrcoef(x):
     stddev = mx.sqrt(mx.diagonal(covariance))
     correlation = covariance / mx.expand_dims(stddev, -1) / stddev
     correlation = mx.clip(correlation, -1, 1)
-    if x.ndim == 1:
-        # A single variable gives a scalar 1, or nan for a zero variance.
+    if correlation.shape[0] == 1:
+        # A single variable gives a scalar like jax, nan if it is constant.
         correlation = mx.reshape(correlation, ())
     return correlation.astype(_mlx_result_dtype(dtype))
 
