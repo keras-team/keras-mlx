@@ -453,6 +453,13 @@ def grouped_conv3d(inputs, kernel, groups, **conv_args):
     return mx.concatenate(outputs, axis=-1)
 
 
+def _conv_general(inputs, kernel, groups, **conv_args):
+    # mlx only supports groups in 1D and 2D convolutions.
+    if inputs.ndim == 5 and groups > 1:
+        return grouped_conv3d(inputs, kernel, groups, **conv_args)
+    return mx.conv_general(inputs, kernel, groups=groups, **conv_args)
+
+
 def conv(
     inputs,
     kernel,
@@ -500,28 +507,16 @@ def conv(
         )
     groups = channels // kernel_in_channels
 
-    if num_spatial_dims == 3 and groups > 1:
-        result = grouped_conv3d(
-            inputs,
-            kernel,
-            groups,
-            stride=strides,
-            padding=mlx_padding,
-            kernel_dilation=dilation_rate,
-            input_dilation=1,
-            flip=False,
-        )
-    else:
-        result = mx.conv_general(
-            inputs,
-            kernel,
-            stride=strides,
-            padding=mlx_padding,
-            kernel_dilation=dilation_rate,
-            input_dilation=1,
-            groups=groups,
-            flip=False,
-        )
+    result = _conv_general(
+        inputs,
+        kernel,
+        groups,
+        stride=strides,
+        padding=mlx_padding,
+        kernel_dilation=dilation_rate,
+        input_dilation=1,
+        flip=False,
+    )
     if data_format == "channels_first":
         result = result.transpose(0, -1, *range(1, result.ndim - 1))
 
@@ -569,14 +564,14 @@ def depthwise_conv(
         strides,
     )
 
-    result = mx.conv_general(
+    result = _conv_general(
         inputs,
         kernel,
+        feature_group_count,
         stride=strides,
         padding=mlx_padding,
         kernel_dilation=dilation_rate,
         input_dilation=1,
-        groups=feature_group_count,
         flip=False,
     )
     if data_format == "channels_first":
