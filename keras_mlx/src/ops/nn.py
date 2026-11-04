@@ -878,7 +878,10 @@ def _canonical_axes(x, axis):
 
 def _normalization_operands(x, weights, axis):
     # The mlx kernels normalize the last axis with 1-D weights, so the axes
-    # are moved to the end and flattened. None means a weight does not match.
+    # are moved to the end and flattened. None falls back to the composed op.
+    if x.size == 0:
+        # Metal fast norm vjps break on empty input, remove once mlx fixes it.
+        return None
     size = math.prod(x.shape[a] for a in axis)
     flat_weights = []
     for weight in weights:
