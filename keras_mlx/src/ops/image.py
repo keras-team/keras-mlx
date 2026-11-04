@@ -177,7 +177,7 @@ def _nearest_indices_and_weights(coordinate):
         if _is_integer(coordinate)
         else _round_half_away_from_zero(coordinate)
     )
-    index = coordinate.astype(mx.int32)
+    index = convert_to_tensor(coordinate, dtype="int32")
     return [(index, 1)]
 
 
@@ -185,7 +185,7 @@ def _linear_indices_and_weights(coordinate):
     lower = mx.floor(coordinate)
     upper_weight = coordinate - lower
     lower_weight = 1 - upper_weight
-    index = lower.astype(mx.int32)
+    index = convert_to_tensor(lower, dtype="int32")
     return [(index, lower_weight), (index + 1, upper_weight)]
 
 
