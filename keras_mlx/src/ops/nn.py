@@ -1441,6 +1441,10 @@ def _dot_product_attention(query, key, value, bias, mask, is_causal, scale):
     return encoded
 
 
+# mlx runs queries up to this length on a vector kernel that has no vjp.
+_SDPA_VECTOR_MAX_QUERY_LEN = 8
+
+
 def _flash_attention(query, key, value, bias, mask, is_causal, scale):
     # mlx's fused kernel wants the heads on axis 1, keras carries them on
     # axis 2.
@@ -1467,6 +1471,14 @@ def _flash_attention(query, key, value, bias, mask, is_causal, scale):
             fused_mask = mx.where(mask, fused_mask, _get_large_negative(dtype))
     else:
         fused_mask = "causal" if is_causal else mask
+    if T <= _SDPA_VECTOR_MAX_QUERY_LEN and (
+        fused_mask is None or isinstance(fused_mask, str)
+    ):
+        # The maskless vector kernel has no vjp, an explicit mask routes the
+        # gradient to a kernel that has one. Remove once mlx adds the vjp.
+        fused_mask = mx.ones((T, S), dtype=mx.bool_)
+        if is_causal:
+            fused_mask = mx.tril(fused_mask)
 
     encoded = mx.fast.scaled_dot_product_attention(
         q, k, v, scale=scale, mask=fused_mask
