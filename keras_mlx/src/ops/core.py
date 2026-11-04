@@ -792,6 +792,12 @@ def remat(f):
     return f
 
 
+def _numpy_leaves_to_tensors(x):
+    return tree.map_structure(
+        lambda t: convert_to_tensor(t) if isinstance(t, np.ndarray) else t, x
+    )
+
+
 def grad(f, argnums=0):
     def scalar_f(*args, **kwargs):
         # A gradient tape sums a non scalar output, so do the same here.
@@ -799,7 +805,9 @@ def grad(f, argnums=0):
 
     def grad_fn(*args, **kwargs):
         positions = standardize_argnums(argnums, len(args))
-        args = list(args)
+        # A numpy array on the left of an mx.array op drops the trace.
+        args = [_numpy_leaves_to_tensors(arg) for arg in args]
+        kwargs = {k: _numpy_leaves_to_tensors(v) for k, v in kwargs.items()}
         for i in positions:
             args[i] = tree.map_structure(convert_to_tensor, args[i])
         grads = mx.grad(scalar_f, argnums=positions)(*args, **kwargs)
