@@ -12,6 +12,7 @@ from keras.src.backend.common import standardize_dtype
 from keras.src.backend.common.backend_utils import canonicalize_axis
 from keras.src.backend.common.backend_utils import normalize_shift_and_axis
 from keras.src.backend.common.backend_utils import vectorize_impl
+from keras_mlx.src.ops.core import _SCATTER_UNSUPPORTED_GPU_DTYPES
 from keras_mlx.src.ops.core import cast
 from keras_mlx.src.ops.core import convert_to_tensor
 from keras_mlx.src.ops.core import convert_to_tensors
@@ -315,6 +316,9 @@ def argsort(x, axis=-1):
 
 def argpartition(x, kth, axis=-1):
     x = convert_to_tensor(x)
+    # Metal has no bool partition kernel, partition bool keys as int8.
+    if x.dtype == mx.bool_:
+        x = x.astype(mx.int8)
     # cast to int32 to align with other backends
     indices = mx.argpartition(x, kth, axis)
     return mx.stop_gradient(indices).astype(mx.int32)
@@ -591,8 +595,9 @@ def cumsum(x, axis=None, dtype=None):
 
 def diag(x, k=0):
     x = convert_to_tensor(x)
-    if x.dtype in [mx.int64, mx.uint64]:
-        return mx.diag(x, k=k, stream=mx.Device(type=mx.DeviceType.cpu))
+    # Building a diagonal matrix scatters, which Metal lacks for these dtypes.
+    if x.ndim == 1 and x.dtype in _SCATTER_UNSUPPORTED_GPU_DTYPES:
+        return mx.diag(x, k=k, stream=mx.cpu)
     return mx.diag(x, k=k)
 
 
@@ -1890,12 +1895,7 @@ def searchsorted(sorted_sequence, values, side="left"):
 
 def diagflat(x, k=0):
     x = convert_to_tensor(x)
-
-    # GPU scatter does not yet support int64 or complex64
-    # for the input or updates.
-    stream = mx.cpu if x.dtype in [mx.int64, mx.complex64] else None
-
-    return mx.diag(mx.reshape(x, [-1]), k, stream=stream)
+    return diag(mx.reshape(x, [-1]), k)
 
 
 def rot90(array, k=1, axes=(0, 1)):
