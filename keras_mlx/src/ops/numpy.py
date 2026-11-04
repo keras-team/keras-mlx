@@ -673,10 +673,10 @@ def expand_dims(x, axis):
 
 def expm1(x):
     x = _cast_ints_to_floatx(x)
-    # mlx's native GPU `expm1` kernel loses precision away from zero, while
-    # `exp(x) - 1` catastrophically cancels near zero. Use whichever is
-    # accurate for the input's magnitude.
-    return mx.where(mx.abs(x) < 0.1, mx.expm1(x), mx.exp(x) - 1)
+    # Metal's expm1 is inexact away from zero and exp(x) - 1 cancels near it.
+    # Masking the unused expm1 input keeps its overflow out of the gradient.
+    small = mx.abs(x) < 0.1
+    return mx.where(small, mx.expm1(mx.where(small, x, 0)), mx.exp(x) - 1)
 
 
 def flip(x, axis=None):
