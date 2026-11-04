@@ -53,6 +53,8 @@ keras/src/ops/math_test.py::MathOpsCorrectnessTest::test_istft4
 keras/src/ops/math_test.py::MathOpsCorrectnessTest::test_istft5
 keras/src/ops/math_test.py::MathOpsCorrectnessTest::test_istft6
 keras/src/ops/numpy_test.py::NumpyOneInputOpsCorrectnessTest::test_argpartition_backend_specific
+# The generic _cov casts int64 inputs to float64, which Metal lacks.
+keras/src/ops/numpy_test.py::NumpyOneInputOpsCorrectnessTest::test_corrcoef_backend_agnostic
 keras/src/ops/numpy_test.py::NumpyOneInputOpsCorrectnessTest::test_floor_divide_float_quotient_rounding_float64
 keras/src/ops/numpy_test.py::NumpyOneInputOpsDynamicShapeTest::test_argmax_negative_zero
 keras/src/ops/numpy_test.py::NumpyOneInputOpsDynamicShapeTest::test_argmin_negative_zero

@@ -1974,33 +1974,15 @@ def signbit(x):
 
 
 def bartlett(x):
-    # ref: jax.numpy.bartlett
-    dtype = to_mlx_dtype(config.floatx())
-    # The window length must be a Python int, mx.ones and mx.arange do not
-    # accept scalar arrays for it.
-    x = int(x)
-    if x <= 1:
-        return mx.ones(x, dtype=dtype)
-
-    n = mx.arange(x, dtype=dtype)
-    return 1 - mx.abs(2 * n + 1 - x) / (x - 1)
+    # The window length must be a Python int, mx.bartlett does not accept
+    # scalar arrays for it.
+    return mx.bartlett(int(x)).astype(to_mlx_dtype(config.floatx()))
 
 
 def blackman(x):
-    # ref: jax.numpy.blackman
-    dtype = to_mlx_dtype(config.floatx())
-    # The window length must be a Python int, mx.ones and mx.arange do not
-    # accept scalar arrays for it.
-    x = int(x)
-    if x <= 1:
-        return mx.ones(x, dtype=dtype)
-
-    n = mx.arange(x, dtype=dtype)
-    return (
-        0.42
-        - 0.5 * mx.cos(2 * mx.pi * n / (x - 1))
-        + 0.08 * mx.cos(4 * mx.pi * n / (x - 1))
-    )
+    # The window length must be a Python int, mx.blackman does not accept
+    # scalar arrays for it.
+    return mx.blackman(int(x)).astype(to_mlx_dtype(config.floatx()))
 
 
 def angle(x):
@@ -2054,10 +2036,11 @@ def array_split(x, indices_or_sections, axis=0):
     if axis < 0:
         axis += x.ndim
     if isinstance(indices_or_sections, int):
+        # Read the size first so a bad axis raises like numpy.
+        size = x.shape[axis]
         n = indices_or_sections
         if n == 1:
             return [x]
-        size = x.shape[axis]
         each, rem = divmod(size, n)
         split_points = []
         pos = 0
@@ -2081,6 +2064,16 @@ def cbrt(x):
     return mx.sign(x) * mx.power(mx.abs(x), 1 / 3)
 
 
+def _covariance(x):
+    # The (N, N) covariance of a 1D or 2D input. Callers cast x first so
+    # each keeps its own compute dtype.
+    if x.ndim == 1:
+        x = mx.expand_dims(x, 0)
+    x_centered = x - mx.mean(x, axis=1, keepdims=True)
+    x_adjoint = mx.transpose(mx.conj(x_centered))
+    return mx.matmul(x_centered, x_adjoint) / builtins.max(x.shape[1] - 1, 0)
+
+
 def corrcoef(x):
     x = convert_to_tensor(x)
     sd = standardize_dtype(x.dtype)
@@ -2093,14 +2086,14 @@ def corrcoef(x):
     # Integers and the half precision types compute in float32 for
     # numerical stability. convert_to_tensor has already downcast float64.
     x = x.astype(mx.float32)
-    if x.ndim == 1:
-        # numpy returns a scalar correlation of 1 for a single variable.
-        return convert_to_tensor(1.0, dtype=dtype)
-    centered = x - mx.mean(x, axis=-1, keepdims=True)
-    covariance = centered @ centered.T / (x.shape[-1] - 1)
+    covariance = _covariance(x)
     stddev = mx.sqrt(mx.diagonal(covariance))
     correlation = covariance / mx.expand_dims(stddev, -1) / stddev
-    return mx.clip(correlation, -1, 1).astype(_mlx_result_dtype(dtype))
+    correlation = mx.clip(correlation, -1, 1)
+    if x.ndim == 1:
+        # A single variable gives a scalar 1, or nan for a zero variance.
+        correlation = mx.reshape(correlation, ())
+    return correlation.astype(_mlx_result_dtype(dtype))
 
 
 def deg2rad(x):
@@ -2886,12 +2879,8 @@ def cov(x):
     result_dtype = _mlx_result_dtype(dtype)
     if x.ndim == 0:
         return mx.full((), mx.nan, dtype=result_dtype)
-    if x.ndim == 1:
-        x = mx.expand_dims(x, 0)
     x = x.astype(_mlx_result_dtype(dtypes.result_type(x.dtype, "float32")))
-    x_centered = x - mx.mean(x, axis=1, keepdims=True)
-    x_adjoint = mx.transpose(mx.conj(x_centered))
-    result = mx.matmul(x_centered, x_adjoint) / builtins.max(x.shape[1] - 1, 0)
+    result = _covariance(x)
     if result.shape[0] == 1:
         result = mx.reshape(result, ())
     return result.astype(result_dtype)
