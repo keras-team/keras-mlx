@@ -2064,6 +2064,16 @@ def cbrt(x):
     return mx.sign(x) * mx.power(mx.abs(x), 1 / 3)
 
 
+def _covariance(x):
+    # The (N, N) covariance of a 1D or 2D input. Callers cast x first so
+    # each keeps its own compute dtype.
+    if x.ndim == 1:
+        x = mx.expand_dims(x, 0)
+    x_centered = x - mx.mean(x, axis=1, keepdims=True)
+    x_adjoint = mx.transpose(mx.conj(x_centered))
+    return mx.matmul(x_centered, x_adjoint) / builtins.max(x.shape[1] - 1, 0)
+
+
 def corrcoef(x):
     x = convert_to_tensor(x)
     sd = standardize_dtype(x.dtype)
@@ -2076,14 +2086,14 @@ def corrcoef(x):
     # Integers and the half precision types compute in float32 for
     # numerical stability. convert_to_tensor has already downcast float64.
     x = x.astype(mx.float32)
-    if x.ndim == 1:
-        # numpy returns a scalar correlation of 1 for a single variable.
-        return convert_to_tensor(1.0, dtype=dtype)
-    centered = x - mx.mean(x, axis=-1, keepdims=True)
-    covariance = centered @ centered.T / (x.shape[-1] - 1)
+    covariance = _covariance(x)
     stddev = mx.sqrt(mx.diagonal(covariance))
     correlation = covariance / mx.expand_dims(stddev, -1) / stddev
-    return mx.clip(correlation, -1, 1).astype(_mlx_result_dtype(dtype))
+    correlation = mx.clip(correlation, -1, 1)
+    if x.ndim == 1:
+        # A single variable gives a scalar 1, or nan for a zero variance.
+        correlation = mx.reshape(correlation, ())
+    return correlation.astype(_mlx_result_dtype(dtype))
 
 
 def deg2rad(x):
@@ -2869,12 +2879,8 @@ def cov(x):
     result_dtype = _mlx_result_dtype(dtype)
     if x.ndim == 0:
         return mx.full((), mx.nan, dtype=result_dtype)
-    if x.ndim == 1:
-        x = mx.expand_dims(x, 0)
     x = x.astype(_mlx_result_dtype(dtypes.result_type(x.dtype, "float32")))
-    x_centered = x - mx.mean(x, axis=1, keepdims=True)
-    x_adjoint = mx.transpose(mx.conj(x_centered))
-    result = mx.matmul(x_centered, x_adjoint) / builtins.max(x.shape[1] - 1, 0)
+    result = _covariance(x)
     if result.shape[0] == 1:
         result = mx.reshape(result, ())
     return result.astype(result_dtype)
