@@ -7,6 +7,7 @@ from keras.src.backend.common import result_type
 from keras.src.backend.common import standardize_dtype
 from keras.src.backend.common.backend_utils import canonicalize_axis
 from keras.src.utils.module_utils import scipy
+from keras_mlx.src.ops.core import cast
 from keras_mlx.src.ops.core import convert_to_tensor
 from keras_mlx.src.ops.core import int_dtype_of_size
 from keras_mlx.src.ops.core import promote_to_float
@@ -599,7 +600,7 @@ def erfinv(x):
 
 
 # Lanczos coefficients for g = 7, the standard nine term set. mlx has no
-# lgamma primitive, so the incomplete gamma below carries its own.
+# lgamma primitive, so lgamma and the incomplete gamma below use these.
 _LANCZOS_G = 7.0
 _LANCZOS_COEFFICIENTS = (
     0.99999999999980993,
@@ -629,12 +630,29 @@ def _lgamma(x):
     for offset, coefficient in enumerate(_LANCZOS_COEFFICIENTS[1:], start=1):
         series = series + coefficient / (z + offset)
     t = z + _LANCZOS_G + 0.5
+    log_t = mx.log(t)
+    # (z + 0.5) * log_t - t, factored so it does not overflow before x does.
     return (
         0.5 * python_math.log(2.0 * python_math.pi)
-        + (z + 0.5) * mx.log(t)
-        - t
+        + (z + 0.5 - t / log_t) * log_t
         + mx.log(series)
     )
+
+
+def lgamma(x):
+    x = convert_to_tensor(x)
+    dtype = result_type(x.dtype, float)
+    x = cast(x, "float32")
+    reflect = x < 0.5
+    positive = _lgamma(mx.where(reflect, 1.0 - x, x))
+    # The distance to the nearest integer keeps sin exact for large |x|. The
+    # branch not taken gets 0.5 so its log, and the gradient, stay finite.
+    frac = mx.where(reflect, x - mx.round(x), 0.5)
+    log_sin = mx.log(mx.abs(mx.sin(python_math.pi * frac)))
+    reflected = python_math.log(python_math.pi) - log_sin - positive
+    result = mx.where(reflect, reflected, positive)
+    result = mx.where(mx.isinf(x), mx.inf, result)
+    return cast(result, dtype)
 
 
 def _log_gamma_prefactor(a, x):
