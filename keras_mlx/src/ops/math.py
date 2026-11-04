@@ -700,13 +700,19 @@ def gammainc(x1, x2):
     # float32 holds the intermediate products either branch needs.
     a = x1.astype(mx.float32)
     x = x2.astype(mx.float32)
-    prefactor = mx.exp(_log_gamma_prefactor(a, x))
+    # The branch not taken and x == 0, which is patched below, get inputs the
+    # math is finite on, so they cannot put a nan in the gradient.
+    safe_x = mx.where(x == 0, 1.0, x)
+    prefactor = mx.exp(_log_gamma_prefactor(a, safe_x))
+    use_series = safe_x < a + 1.0
     # 1. Below a + 1 the series gives the lower tail directly.
-    series = _lower_gamma_series(a, x) * prefactor
+    series_x = mx.where(use_series, safe_x, 0.0)
+    series = _lower_gamma_series(a, series_x) * prefactor
     # 2. At or above it the fraction gives the upper tail, so take the
     # complement.
-    fraction = 1.0 - _upper_gamma_fraction(a, x) * prefactor
-    out = mx.where(x < a + 1.0, series, fraction)
+    fraction_x = mx.where(use_series, a + 1.0, safe_x)
+    fraction = 1.0 - _upper_gamma_fraction(a, fraction_x) * prefactor
+    out = mx.where(use_series, series, fraction)
     # The logarithm above is not finite at the edges of the domain. Later
     # patches take precedence, and the invalid inputs come last.
     out = mx.where(mx.isinf(x) & (a > 0), 1.0, out)
