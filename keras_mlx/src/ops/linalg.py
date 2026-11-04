@@ -135,10 +135,8 @@ def cholesky(a, upper=False):
     a = promote_to_float(a)
     with mx.stream(mx.cpu):
         out = mx.linalg.cholesky(a, upper=upper)
-    # Match numpy and jax and surface a non positive definite input as an
-    # error. A real factor has a strictly positive diagonal, and mlx returns
-    # a negative one rather than nan for most such inputs. The comparison
-    # also catches nan, since nan > 0 is false.
+    # Raise for a non positive definite input like numpy and jax. mlx returns a
+    # negative diagonal rather than nan, so require > 0, which also catches nan.
     diagonal = mx.diagonal(out, axis1=-2, axis2=-1)
     try:
         positive = bool(mx.all(diagonal > 0))
@@ -284,10 +282,8 @@ def matrix_rank(x, tol=None):
     x, _ = lapack_float(x)
     s = svd(x, compute_uv=False)
     if tol is None:
-        # eps of the INPUT dtype, not the compute one. Widening a half
-        # precision input to float32 adds no information, so a float32 eps
-        # would put the cutoff far below the noise the data actually carries
-        # and count that noise as rank.
+        # eps of the INPUT dtype, not the compute one. A float32 eps would put
+        # the cutoff for a widened half input far below the data's noise.
         eps = np.finfo(std).eps
         tol = mx.max(s, axis=-1, keepdims=True) * max(x.shape[-2:]) * eps
     return mx.sum(s > tol, axis=-1).astype(mx.int32)
@@ -309,10 +305,8 @@ def jvp(fun, primals, tangents, has_aux=False):
     primals = list(primals)
     tangents = list(tangents)
 
-    # mx.jvp has no has_aux and returns flat lists, so strip the aux output
-    # before differentiating and record the output structure, both from the
-    # single call `mx.jvp` makes internally rather than a second concrete
-    # call to `fun`.
+    # mx.jvp has no has_aux, so strip the aux output before differentiating and
+    # record the output structure from the single call mx.jvp makes internally.
     structure_holder = [None]
     if has_aux:
         aux_holder = [None]

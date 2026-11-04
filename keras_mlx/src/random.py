@@ -144,10 +144,7 @@ def shuffle(x, axis=0, seed=None):
 
 
 def gamma(shape, alpha, dtype=None, seed=None):
-    # Ref: jax.random.gamma
-    # Ref: Marsaglia and Tsang method for generating gamma variables
-    # Algorithm description can be found here:
-    # https://en.wikipedia.org/wiki/Gamma_distribution#Random_variate_generation
+    # Ref: jax.random.gamma, Marsaglia and Tsang method for gamma variables.
     if isinstance(shape, int):
         shape = (shape,)
 
@@ -195,10 +192,9 @@ def gamma(shape, alpha, dtype=None, seed=None):
         results = mx.where(accept, d * v, results)
         done = mx.logical_or(done, accept)
 
-        # Stop once every lane has a sample. Reading `done` frees the
-        # round's intermediates, which is what keeps a large `shape` off the
-        # Metal buffer limit. While tracing the read is illegal, so all
-        # GAMMA_ROUNDS run instead.
+        # Stop once every lane is done. The read also frees intermediates,
+        # keeping large shapes under the Metal limit. While tracing it raises
+        # ValueError, so all rounds run.
         try:
             if bool(mx.all(done)):
                 break

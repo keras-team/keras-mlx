@@ -39,19 +39,8 @@ def add(x1, x2):
 
 
 def _contraction_dtypes(result_dtype):
-    """The compute and result dtypes for a contraction.
-
-    mlx has no integer contraction kernel, so integer and bool inputs run in
-    float32 and cast back, which is what `matmul` already did. That holds
-    exactly to 2**24, and it is the products that have to fit, not the
-    inputs.
-
-    Args:
-        result_dtype: The promoted dtype the contraction should return.
-
-    Returns:
-        The dtype to compute in and the dtype to return.
-    """
+    # mlx has no integer contraction kernel, so ints and bools compute in
+    # float32, exact while the products stay below 2**24.
     out_dtype = to_mlx_dtype(result_dtype)
     standardized = standardize_dtype(result_dtype)
     if "int" in standardized or standardized == "bool":
@@ -957,11 +946,8 @@ def ndim(x):
 
 
 def _unique_prepare(elements, ndim):
-    # Sort the elements (rows lexicographically when ndim is 2) with a
-    # stable order and mark the start of each group of equal elements.
-    # The first occurrence semantics of return_index, and the
-    # lexicographic row sort below, both rely on mx.argsort being
-    # stable, which matches numpy and jax.
+    # Stable-sort the elements (rows lexicographically if ndim is 2) and mark
+    # each group start. The row sort and return_index rely on a stable argsort.
     n = elements.shape[0]
     if ndim == 1:
         order = argsort(elements)
@@ -995,10 +981,8 @@ def _unique_prepare(elements, ndim):
 def nonzero(x):
     x = convert_to_tensor(x)
     flat_mask = (x != 0).reshape(-1)
-    # The number of nonzero entries determines the output shape, so this
-    # op is eager only, like on every other backend. A stable argsort
-    # moves the flat indices of the nonzero entries to the front in
-    # ascending order.
+    # The nonzero count sets the output shape, so this is eager only like on
+    # other backends. A stable argsort moves the nonzero flat indices first.
     count = int(mx.sum(flat_mask))
     flat_idx = argsort(mx.logical_not(flat_mask))[:count]
     strides = []
@@ -1101,11 +1085,9 @@ def _quantile_flatten_axis(x, axis):
 def _quantile(
     x, q, axis=None, method="linear", keepdims=False, nan_aware=False
 ):
-    # Ported from the tensorflow backend, which follows
-    # tfp.stats.percentile, extended with per slice valid counts for the
-    # nan aware variants, whose nans sort last. Index math runs in
-    # float32 because float64 is not available on the GPU, which limits
-    # exact indexing to axis lengths below 2**24.
+    # Ported from the tf backend. Nans sort last, so per slice valid counts
+    # index the right values. Index math is float32 since Metal has no
+    # float64, so it is exact below 2**24.
     if axis is not None and not isinstance(axis, (tuple, list)):
         axis = [axis]
     q_full = convert_to_tensor(q, dtype="float32")
@@ -1941,10 +1923,8 @@ def _np_axis(axis):
 
 
 def _mlx_result_dtype(dtype):
-    # mlx has no float64 on the default (GPU) device, so the backend never
-    # materializes float64. Mirror the rest of the backend by downcasting any
-    # float64 result to the configured floatx. 64-bit dtypes are excluded from
-    # the dtype test matrix, so this only affects host int64/float64 inputs.
+    # mlx has no float64 on the GPU, so downcast float64 results to the
+    # configured floatx like the rest of the backend.
     if standardize_dtype(dtype) == "float64":
         return to_mlx_dtype(config.floatx())
     return to_mlx_dtype(dtype)
@@ -2122,10 +2102,8 @@ def fmod(x1, x2):
         # Divide by one where the divisor is zero, as jax does.
         x2 = mx.where(x2 == 0, 1, x2)
     if dtype in ("int8", "int16", "int32"):
-        # Avoid abs, which wraps for the minimum value, and widening, which
-        # int32 has no room for. Shift the mod style remainder back to the sign
-        # of the dividend. A divisor of -1 gives zero and would trap on the
-        # minimum.
+        # abs wraps at the minimum and int32 cannot widen, so shift the mod
+        # remainder to the dividend's sign. Swap a -1 divisor, it would trap.
         r = mx.remainder(x1, mx.where(x2 == -1, mx.ones_like(x2), x2))
         return mx.where((r != 0) & ((r < 0) != (x1 < 0)), r - x2, r)
     # mx.remainder is mod style, taking the sign of the divisor. fmod takes
@@ -2250,10 +2228,8 @@ def hypot(x1, x2):
 
 
 def _i0_float32(abs_x):
-    # Abramowitz and Stegun 9.8.1 and 9.8.2 polynomial approximations of
-    # the modified Bessel function of order zero, on a non-negative
-    # float32 input. The absolute error is below 1.6e-7 for the small
-    # branch and the relative error below 1.9e-7 for the large branch.
+    # Abramowitz and Stegun 9.8.1 and 9.8.2 for the order zero modified Bessel
+    # function. Absolute error < 1.6e-7 (small), relative < 1.9e-7 (large).
     t = mx.square(abs_x / 3.75)
     small = 1 + t * (
         3.5156229

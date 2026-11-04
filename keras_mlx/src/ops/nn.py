@@ -1149,10 +1149,8 @@ def _ctc_beam_search_decode(
     if mask_index is None:
         mask_index = num_classes - 1
 
-    # This is a workaround for the fact that mlx.core.argsort does not support
-    # the order parameter which is used to break ties when scores are equal.
-    # For compatibility with the tensorflow implementation, we flip the inputs
-    # and the mask_index, and then flip the classes back to the correct indices
+    # mx.argsort has no order parameter to break ties, so flip the inputs and
+    # mask_index and flip the classes back, matching the tensorflow backend.
     inputs = flip(inputs, axis=2)
     mask_index = num_classes - mask_index - 1
 

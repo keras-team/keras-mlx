@@ -455,11 +455,7 @@ def _fill_lanczos_kernel(radius, x):
 
 
 def _fill_keys_cubic_kernel(x):
-    # Ref: jax.image.resize
-    # http://ieeexplore.ieee.org/document/1163711/
-    # R. G. Keys. Cubic convolution interpolation for digital image processing.
-    # IEEE Transactions on Acoustics, Speech, and Signal Processing,
-    # 29(6):1153–1160, 1981.
+    # Ref: jax.image.resize, Keys cubic convolution (IEEE TASSP 1981).
     out = ((1.5 * x - 2.5) * x) * x + 1.0
     out = mx.where(x >= 1.0, ((-0.5 * x + 2.5) * x - 4.0) * x + 2.0, out)
     return mx.where(x >= 2.0, 0.0, out)
