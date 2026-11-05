@@ -5,6 +5,7 @@ from keras.src import tree
 from keras.src.backend.common import result_type
 from keras.src.backend.common import standardize_dtype
 from keras_mlx.src.ops.core import convert_to_tensor
+from keras_mlx.src.ops.core import promote_to_float
 
 
 def _det_2x2(a):
@@ -26,9 +27,7 @@ def det(a):
     a = convert_to_tensor(a)
     # Promote integer and bool inputs to float, matching jax and so the 2x2
     # and 3x3 fast paths do not return an integer determinant.
-    std = standardize_dtype(a.dtype)
-    if "int" in std or std == "bool":
-        a = a.astype(mx.float32)
+    a = promote_to_float(a)
     a_shape = a.shape
     if len(a_shape) >= 2 and a_shape[-1] == 2 and a_shape[-2] == 2:
         return _det_2x2(a)
@@ -39,26 +38,30 @@ def det(a):
     target = a.dtype
     if a.dtype in (mx.bfloat16, mx.float16):
         a = a.astype(mx.float32)
-    # mlx lu_factor aborts the whole process on an exactly singular
-    # input, so compute the determinant as the eigenvalue product, which
-    # handles singular matrices naturally.
+    # The eigenvalue product handles singular matrices naturally.
     with mx.stream(mx.cpu):
         w = mx.linalg.eigvals(a)
     return mx.real(mx.prod(w, axis=-1)).astype(target)
 
 
 def eig(a):
+    # Ints and bools are not accepted by the mlx kernels, so promote like jax.
+    a = promote_to_float(a)
     with mx.stream(mx.cpu):
         # This op is not yet supported on the GPU.
         return mx.linalg.eig(a)
 
 
 def eigh(a):
+    # Ints and bools are not accepted by the mlx kernels, so promote like jax.
+    a = promote_to_float(a)
     with mx.stream(mx.cpu):
         return mx.linalg.eigh(a)
 
 
 def lu_factor(a):
+    # Ints and bools are not accepted by the mlx kernels, so promote like jax.
+    a = promote_to_float(a)
     with mx.stream(mx.cpu):
         # This op is not yet supported on the GPU.
         lu, pivots = mx.linalg.lu_factor(a)
@@ -66,6 +69,8 @@ def lu_factor(a):
 
 
 def solve(a, b):
+    # Promote both operands together, as jax does for mixed inputs.
+    a, b = promote_to_float(a, b)
     vector_rhs = b.ndim == a.ndim - 1
     if vector_rhs:
         b = mx.expand_dims(b, axis=-1)
@@ -77,6 +82,8 @@ def solve(a, b):
 
 
 def solve_triangular(a, b, lower=False):
+    # Promote both operands together, as jax does for mixed inputs.
+    a, b = promote_to_float(a, b)
     upper = not lower
     with mx.stream(mx.cpu):
         # This op is not yet supported on the GPU.
@@ -96,6 +103,8 @@ def qr(x, mode="reduced"):
             f"Received: mode={mode}"
         )
     x = convert_to_tensor(x)
+    # Ints and bools are not accepted by the mlx kernels, so promote like jax.
+    x = promote_to_float(x)
     with mx.stream(mx.cpu):
         if mode == "reduced":
             return mx.linalg.qr(x)
@@ -112,10 +121,12 @@ def qr(x, mode="reduced"):
 
 
 def svd(x, full_matrices=True, compute_uv=True):
+    # Ints and bools are not accepted by the mlx kernels, so promote like jax.
+    x = promote_to_float(x)
     with mx.stream(mx.cpu):
-        u, s, vt = mx.linalg.svd(x)
         if not compute_uv:
-            return s
+            return mx.linalg.svd(x, compute_uv=False)
+        u, s, vt = mx.linalg.svd(x)
         if not full_matrices:
             n = min(x.shape[-2:])
             return u[..., :n], s, vt[..., :n, :]
@@ -124,6 +135,8 @@ def svd(x, full_matrices=True, compute_uv=True):
 
 
 def cholesky(a, upper=False):
+    # Ints and bools are not accepted by the mlx kernels, so promote like jax.
+    a = promote_to_float(a)
     with mx.stream(mx.cpu):
         out = mx.linalg.cholesky(a, upper=upper)
     # Match numpy and jax and surface a non positive definite input as an
@@ -131,7 +144,12 @@ def cholesky(a, upper=False):
     # a negative one rather than nan for most such inputs. The comparison
     # also catches nan, since nan > 0 is false.
     diagonal = mx.diagonal(out, axis1=-2, axis2=-1)
-    if not mx.all(diagonal > 0):
+    try:
+        positive = bool(mx.all(diagonal > 0))
+    except ValueError:
+        # Values cannot be read while tracing.
+        positive = True
+    if not positive:
         raise ValueError(
             "Cholesky decomposition failed. The input might not be a valid "
             "positive definite matrix."
@@ -144,8 +162,10 @@ def norm(x, ord=None, axis=None, keepdims=False):
     if "int" in dtype or dtype == "bool":
         dtype = result_type(x.dtype, "float32")
     x = convert_to_tensor(x, dtype=dtype)
-    # mlx linalg kernels do not support bfloat16, compute in float32.
-    if x.dtype == mx.bfloat16:
+    # mlx linalg kernels do not support half precision, compute in float32 and
+    # cast back to the input dtype.
+    result_dtype = x.dtype
+    if x.dtype in (mx.bfloat16, mx.float16):
         x = x.astype(mx.float32)
     # Singular value matrix norms are svd-based, which is CPU-only in mlx.
     if isinstance(axis, (tuple, list)):
@@ -168,10 +188,12 @@ def norm(x, ord=None, axis=None, keepdims=False):
         # mlx flattens the input when axis is None and ord is None, losing
         # the dimensions that numpy keeps with keepdims.
         output = output.reshape((1,) * x.ndim)
-    return output
+    return output.astype(result_dtype)
 
 
 def inv(a):
+    # Ints and bools are not accepted by the mlx kernels, so promote like jax.
+    a = promote_to_float(a)
     with mx.stream(mx.cpu):
         return mx.linalg.inv(a)
 
@@ -183,6 +205,8 @@ def lstsq(a, b, rcond=None):
         raise ValueError(
             "Incompatible shapes: a and b must have the same number of rows."
         )
+    # Promote both operands together, as jax does for mixed inputs.
+    a, b = promote_to_float(a, b)
     b_orig_ndim = b.ndim
     if b.ndim == 1:
         b = mx.expand_dims(b, axis=-1)
@@ -199,7 +223,8 @@ def lstsq(a, b, rcond=None):
         rcond = mx.where(rcond < 0, eps, rcond)
     u, s, vt = svd(a, full_matrices=False)
 
-    mask = s >= mx.array(rcond, dtype=s.dtype) * s[0]
+    # A zero matrix has s[0] == 0, which would keep every zero singular value.
+    mask = (s > 0) & (s >= mx.array(rcond, dtype=s.dtype) * s[0])
     safe_s = mx.array(mx.where(mask, s, 1), dtype=dtype)
     s_inv = mx.where(mask, 1 / safe_s, 0)
     s_inv = mx.expand_dims(s_inv, axis=1)
@@ -210,6 +235,13 @@ def lstsq(a, b, rcond=None):
         x = mx.squeeze(x, axis=-1)
 
     return x
+
+
+def _int_matmul(x, y):
+    # mlx matmul rejects ints and bools, so multiply and sum in place. The
+    # astype is needed because mx.sum widens small ints and bool.
+    prod = mx.expand_dims(x, -1) * mx.expand_dims(y, -3)
+    return mx.sum(prod, axis=-2).astype(x.dtype)
 
 
 def matrix_power(a, n):
@@ -223,18 +255,21 @@ def matrix_power(a, n):
         a = inv(a)
         n = -n
     # 3. Compute by binary exponentiation, matching numpy's repeated squaring.
+    matmul = mx.matmul if mx.issubdtype(a.dtype, mx.inexact) else _int_matmul
     result = None
     while n > 0:
         if n % 2 == 1:
-            result = a if result is None else result @ a
+            result = a if result is None else matmul(result, a)
         n //= 2
         if n > 0:
-            a = a @ a
+            a = matmul(a, a)
     return result
 
 
 def pinv(x, rcond=None):
     x = convert_to_tensor(x)
+    # Ints and bools are not accepted by the mlx kernels, so promote like jax.
+    x = promote_to_float(x)
     target = x.dtype
     # The mlx lapack kernels reject the half precision types, so compute
     # those in float32 and cast back.
@@ -261,10 +296,8 @@ def matrix_rank(x, tol=None):
             f"Received input with shape {x.shape}."
         )
     # Promote integer and bool inputs to float, matching jax.
+    x = promote_to_float(x)
     std = standardize_dtype(x.dtype)
-    if "int" in std or std == "bool":
-        x = x.astype(mx.float32)
-        std = "float32"
     # The mlx svd kernel rejects the half precision types, so those compute
     # in float32. float64 goes through as is.
     if x.dtype in (mx.bfloat16, mx.float16):
@@ -282,6 +315,8 @@ def matrix_rank(x, tol=None):
 
 def cholesky_inverse(a, upper=False):
     a = convert_to_tensor(a)
+    # Ints and bools are not accepted by the mlx kernels, so promote like jax.
+    a = promote_to_float(a)
     identity = mx.eye(a.shape[-1], dtype=a.dtype)
     inv_chol = solve_triangular(a, identity, lower=not upper)
     inv_chol_t = mx.swapaxes(inv_chol, -1, -2)

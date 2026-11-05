@@ -6,7 +6,6 @@ from itertools import accumulate
 import mlx.core as mx
 import mlx.nn as nn
 
-from keras.src.backend.common import dtypes
 from keras.src.backend.common import is_float_dtype
 from keras.src.backend.common import result_type
 from keras.src.backend.common import standardize_dtype
@@ -23,7 +22,7 @@ from keras.src.backend.config import standardize_data_format
 from keras.src.utils.argument_validation import standardize_tuple
 from keras_mlx.src.ops.core import cast
 from keras_mlx.src.ops.core import convert_to_tensor
-from keras_mlx.src.ops.core import reverse_sequence
+from keras_mlx.src.ops.core import promote_to_float
 from keras_mlx.src.ops.core import scan
 from keras_mlx.src.ops.core import to_mlx_dtype
 from keras_mlx.src.ops.numpy import _unique_prepare
@@ -104,9 +103,7 @@ def sigmoid(x):
 def sparse_sigmoid(x):
     x = convert_to_tensor(x)
     # Ints can't hold the 0.5 midpoint or, if unsigned, the -1 bound.
-    float_dtype = dtypes.promote_to_float_dtype(x.dtype)
-    if float_dtype != standardize_dtype(x.dtype):
-        x = cast(x, float_dtype)
+    x = promote_to_float(x)
     return mx.where(x <= -1, 0, mx.where(x >= 1, 1, 0.5 * (x + 1)))
 
 
@@ -145,6 +142,8 @@ def soft_shrink(x, threshold=0.5):
 
 def sparse_plus(x):
     x = convert_to_tensor(x)
+    # Ints can't hold the fractional results or, if unsigned, the -1 bound.
+    x = promote_to_float(x)
     return mx.where(
         x <= -1,
         mx.zeros_like(x),
@@ -159,6 +158,7 @@ def silu(x):
 
 def squareplus(x, b=4):
     x = convert_to_tensor(x)
+    x = promote_to_float(x)
     b = convert_to_tensor(b, dtype=x.dtype)
     y = x + mx.sqrt(x**2 + b)
     return y / 2
@@ -177,9 +177,7 @@ def leaky_relu(x, negative_slope=0.2):
 def hard_sigmoid(x):
     x = convert_to_tensor(x)
     # mlx promotes ints on its own, but to float32 rather than floatx.
-    float_dtype = dtypes.promote_to_float_dtype(x.dtype)
-    if float_dtype != standardize_dtype(x.dtype):
-        x = cast(x, float_dtype)
+    x = promote_to_float(x)
     return mx.maximum(0, mx.minimum(1, x / 6 + 0.5))
 
 
@@ -228,7 +226,8 @@ def glu(x, axis=-1):
 
 def hard_tanh(x):
     x = convert_to_tensor(x)
-    return nn.hard_tanh(x)
+    # nn.hard_tanh casts ints to float.
+    return mx.where(x > 1, 1, mx.where(x < -1, -1, x))
 
 
 def hard_shrink(x, threshold=0.5):
@@ -243,16 +242,24 @@ def threshold(x, threshold, default_value):
 
 def softmax(x, axis=-1):
     x = convert_to_tensor(x)
+    # Ints promote to float like jax.
+    x = promote_to_float(x)
     return mx.softmax(x, axis=axis)
 
 
 def log_softmax(x, axis=-1):
     x = convert_to_tensor(x)
+    x = promote_to_float(x)
+    # mlx logsumexp rejects empty input and the result is empty as well.
+    if x.size == 0:
+        return x
     return x - mx.logsumexp(x, axis=axis, keepdims=True)
 
 
 def sparsemax(x, axis=-1):
     logits = convert_to_tensor(x)
+    # Ints can't hold the fractional results or, if unsigned, the -1 bound.
+    logits = promote_to_float(logits)
     logits_sorted = -mx.sort(-logits, axis=axis)
     logits_cumsum = mx.cumsum(logits_sorted, axis=axis)  # find cumulative sum
     r = mx.arange(1, logits.shape[axis] + 1)  # Determine the sparsity
@@ -404,8 +411,6 @@ def max_pool(
 def average_pool(
     inputs, pool_size, strides=None, padding="valid", data_format=None
 ):
-    import math
-
     inputs = convert_to_tensor(inputs)
     data_format = standardize_data_format(data_format)
     num_spatial_dims = inputs.ndim - 2
@@ -422,14 +427,13 @@ def average_pool(
         # the average
         return pooled / math.prod(pool_size)
     else:
-        # Create a tensor of ones of the same shape of inputs.
-        # Then create a pool, padding by zero and using sum as function.
-        # This will create a tensor of the same dimensions as pooled tensor
-        # with values being the sum.
-        # By dividing pooled by windows_counts, we get the average while
-        # skipping the padded values.
+        # The counts do not depend on batch or channels, so pool one of each.
+        if data_format == "channels_first":
+            ones_shape = (1, 1) + inputs.shape[2:]
+        else:
+            ones_shape = (1,) + inputs.shape[1:-1] + (1,)
         window_counts = _pool(
-            mx.ones(inputs.shape, inputs.dtype),
+            mx.ones(ones_shape, inputs.dtype),
             pool_size,
             strides,
             padding,
@@ -679,11 +683,6 @@ def conv_transpose(
         )
     groups = channels // kernel_in_channels
 
-    for ax in range(1, kernel.ndim - 1):
-        # flip=True produces unexpected gradients
-        # manually flip spatial dimensions until fixed
-        kernel = reverse_sequence(kernel, axis=ax)
-
     result = mx.conv_general(
         inputs,
         kernel,
@@ -692,7 +691,7 @@ def conv_transpose(
         kernel_dilation=dilation_rate,
         input_dilation=strides,
         groups=groups,
-        flip=False,
+        flip=True,
     )
 
     if data_format == "channels_first":
@@ -791,7 +790,11 @@ def sparse_categorical_crossentropy(target, output, from_logits=False, axis=-1):
         output = mx.minimum(mx.maximum(output, epsilon()), 1 - epsilon())
         log_prob = mx.log(output)
 
-    return -mx.take_along_axis(log_prob, target[..., None], axis=-1).squeeze(-1)
+    # Out of range classes give zero loss, as with a one hot target.
+    valid = (target >= 0) & (target < output.shape[-1])
+    target = mx.where(valid, target, 0)
+    loss = -mx.take_along_axis(log_prob, target[..., None], axis=-1).squeeze(-1)
+    return mx.where(valid, loss, 0)
 
 
 def binary_crossentropy(target, output, from_logits=False):
@@ -1434,7 +1437,10 @@ def _flash_attention(query, key, value, bias, mask, is_causal, scale):
     k = mx.swapaxes(key.astype(dtype), 1, 2)
     v = mx.swapaxes(value.astype(dtype), 1, 2)
 
-    if bias is None and mask is None:
+    # mlx aligns its "causal" mask to the bottom right and keras to the top
+    # left, so the string only fits when the query and key lengths match.
+    square = q.shape[2] == k.shape[2]
+    if bias is None and mask is None and (square or not is_causal):
         fused_mask = "causal" if is_causal else None
     else:
         # The kernel takes one additive mask, so fold the bias and the mask
