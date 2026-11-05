@@ -344,14 +344,9 @@ class Trainer(BaseTrainer):
             if concatenate_outputs:
 
                 def concatenate(outputs):
-                    output = outputs[0]
-                    for next_output in outputs[1:]:
-                        output = tree.map_structure(
-                            lambda t1, t2: mx.concatenate([t1, t2]),
-                            output,
-                            next_output,
-                        )
-                    return output
+                    return tree.map_structure(
+                        lambda *xs: mx.concatenate(xs), *outputs
+                    )
 
                 if not self.run_eagerly and self.jit_compile:
                     concatenate = mx.compile(concatenate)
@@ -811,8 +806,6 @@ class Trainer(BaseTrainer):
                             non_trainable_variables=state[1]
                         )
                         self._state_synced = False
-                    else:
-                        state = (state[0], non_trainable_variables)
                     batch_outputs, state = self.predict_function(
                         state, iter(data)
                     )

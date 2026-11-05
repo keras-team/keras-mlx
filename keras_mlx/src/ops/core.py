@@ -8,6 +8,8 @@ import numpy as np
 
 from keras.src import tree
 from keras.src.backend.common import KerasVariable as Variable
+from keras.src.backend.common import dtypes
+from keras.src.backend.common import result_type
 from keras.src.backend.common import standardize_dtype
 from keras.src.backend.common.backend_utils import slice_along_axis
 from keras.src.backend.common.backend_utils import standardize_argnums
@@ -79,20 +81,17 @@ def convert_to_tensor(x, dtype=None, sparse=None, ragged=None):
         if x.dtype == np.float64:
             # mlx backend does not support float64
             x = x.astype(np.float32)
-        # standardize_dtype was a third of the per batch conversion time.
-        if x.dtype.name == "bfloat16":
-            # mlx currently fails to load a numpy array with dtype=bfloat16
-            # upcast to float32 to avoid error
-            x = x.astype(np.float32)
-            # if a bfloat16 np.ndarray is passed to mx.array with dtype=None
-            # it casts the output to complex64, so we force cast to bfloat16
-            # (but by upcasting we avoid x.dtype=bfloat16 and mlx_dtype=None)
-            mlx_dtype = mx.bfloat16 if mlx_dtype is None else mlx_dtype
         # mlx 0.32 raises on negative stride numpy views like img[..., ::-1].
         # Remove once mlx copies them instead.
         if any(stride < 0 for stride in x.strides):
             x = np.ascontiguousarray(x)
-        return mx.array(x, dtype=mlx_dtype)
+        try:
+            return mx.array(x, dtype=mlx_dtype)
+        except RuntimeError:
+            # mlx raises a bare std::bad_cast. standardize_dtype raises a
+            # ValueError naming the dtype when it is not supported.
+            standardize_dtype(x.dtype)
+            raise
 
     if isinstance(x, (list, tuple)):
         # mx.array rejects Variables and numpy arrays inside a list, so
@@ -166,8 +165,6 @@ def convert_to_numpy(x):
             # mlx currently has an error passing bfloat16 array to numpy
             # upcast to float32 then downcast to bfloat16
             return np.array(x.astype(mx.float32)).astype(ml_dtypes.bfloat16)
-        if x.ndim == 0:
-            return np.array(x.item(), dtype=standardize_dtype(x.dtype))
     # np.array evaluates through the buffer protocol, no eval needed.
     return np.array(x)
 
@@ -182,6 +179,20 @@ def shape(x):
 
 def cast(x, dtype):
     return convert_to_tensor(x, dtype=dtype)
+
+
+def promote_to_float(x, *others):
+    # With several operands they promote together, as jax does for mixed
+    # inputs, and a tuple comes back.
+    if others:
+        dtype = result_type(x.dtype, *[o.dtype for o in others])
+        float_dtype = dtypes.promote_to_float_dtype(dtype)
+        return tuple(cast(t, float_dtype) for t in (x, *others))
+    return cast(x, dtypes.promote_to_float_dtype(x.dtype))
+
+
+def int_dtype_of_size(dtype):
+    return {2: mx.int16, 4: mx.int32, 8: mx.int64}[dtype.size]
 
 
 # Shape / dtype inference util
@@ -246,6 +257,50 @@ def compute_output_spec(fn, *args, **kwargs):
     return output_spec
 
 
+def _run_all_branches(branches, select):
+    # MLX has no primitive for data-dependent control flow, so every branch
+    # is evaluated and `select` picks between their outputs.
+    scope = get_stateless_scope()
+    if scope is None:
+        outputs = [branch() for branch in branches]
+    else:
+        # Branches can assign variables, so each runs on its own copy of the
+        # state and the assignments are selected like the outputs.
+        before = scope.state_mapping
+        outputs, states = [], []
+        for branch in branches:
+            scope.state_mapping = dict(before)
+            outputs.append(branch())
+            states.append(scope.state_mapping)
+        scope.state_mapping = dict(before)
+        for key in set().union(*states):
+            values = [state.get(key, before.get(key)) for state in states]
+            if all(value is values[0] for value in values):
+                scope.state_mapping[key] = values[0]
+            else:
+                scope.state_mapping[key] = select(*values)
+
+    def select_output(*values):
+        # mx.where would broadcast mismatched shapes.
+        specs = [
+            (
+                tuple(getattr(v, "shape", ())),
+                v.dtype if isinstance(v, mx.array) else None,
+            )
+            for v in values
+        ]
+        shapes = {shape for shape, _ in specs}
+        dtypes = {dtype for _, dtype in specs if dtype is not None}
+        if len(shapes) > 1 or len(dtypes) > 1:
+            raise ValueError(
+                "All branches should return outputs of the same kind "
+                f"(struct, dtype and shape). Got {specs} instead."
+            )
+        return select(*values)
+
+    return tree.map_structure(select_output, *outputs, none_is_leaf=False)
+
+
 def cond(pred, true_fn, false_fn):
     try:
         pred_value = bool(pred)
@@ -258,37 +313,15 @@ def cond(pred, true_fn, false_fn):
         return true_fn() if pred_value else false_fn()
 
     # Forcing `pred` to a concrete bool raised, which means we are being
-    # traced by `mx.compile` or `mx.vmap`. MLX has no primitive for
-    # data-dependent control flow, so both branches are evaluated and their
-    # outputs are selected with `mx.where` instead.
-    scope = get_stateless_scope()
-    if scope is None:
-        true_out = true_fn()
-        false_out = false_fn()
-    else:
-        # Branches can assign variables, so each runs on its own copy of the
-        # state and the assignments are selected like the outputs.
-        before = scope.state_mapping
-        scope.state_mapping = dict(before)
-        true_out = true_fn()
-        true_state = scope.state_mapping
-        scope.state_mapping = dict(before)
-        false_out = false_fn()
-        false_state = scope.state_mapping
-        scope.state_mapping = dict(before)
-        for key in true_state.keys() | false_state.keys():
-            t = true_state.get(key, before.get(key))
-            f = false_state.get(key, before.get(key))
-            scope.state_mapping[key] = t if t is f else mx.where(pred, t, f)
-    return tree.map_structure(
-        lambda t, f: mx.where(pred, t, f),
-        true_out,
-        false_out,
-        none_is_leaf=False,
+    # traced by `mx.compile` or `mx.vmap`.
+    return _run_all_branches(
+        (true_fn, false_fn), lambda t, f: mx.where(pred, t, f)
     )
 
 
 def vectorized_map(function, elements):
+    # mx.vmap only takes mlx arrays in its input tree.
+    elements = tree.map_structure(convert_to_tensor, elements)
     return mx.vmap(function)(elements)
 
 
@@ -432,9 +465,24 @@ def slice_update(inputs, start_indices, updates):
 
 def switch(index, branches, *operands):
     index = convert_to_tensor(index, "int32")
-    index = mx.clip(index, 0, len(branches) - 1).tolist()
+    index = mx.clip(index, 0, len(branches) - 1)
     operands = tuple(convert_to_tensor(o) for o in operands)
-    return branches[index](*operands)
+    try:
+        index_value = index.item()
+    except ValueError:
+        index_value = None
+    if index_value is not None:
+        return branches[index_value](*operands)
+
+    def select(*values):
+        out = values[0]
+        for i, value in enumerate(values[1:], 1):
+            out = mx.where(index == i, value, out)
+        return out
+
+    return _run_all_branches(
+        [functools.partial(branch, *operands) for branch in branches], select
+    )
 
 
 def while_loop(
@@ -454,7 +502,7 @@ def while_loop(
     is_tuple = isinstance(loop_vars, (tuple, list))
     loop_vars = tuple(loop_vars) if is_tuple else (loop_vars,)
     loop_vars = tree.map_structure(convert_to_tensor, loop_vars)
-    while cond(*loop_vars) and iteration_check(current_iter):
+    while iteration_check(current_iter) and cond(*loop_vars):
         loop_vars = body(*loop_vars)
         if not isinstance(loop_vars, (list, tuple)):
             loop_vars = (loop_vars,)
@@ -547,7 +595,22 @@ def scan(f, init, xs=None, length=None, reverse=False, unroll=1):
     init_flat = tree.flatten(init)
     init_flat = [convert_to_tensor(v) for v in init_flat]
     init = pack_output(init_flat)
-    dummy_y = [mx.zeros_like(v) for v in init_flat]
+
+    if n == 0:
+        # Run f once for the shape of ys, discarding state updates.
+        x_slice = [
+            KerasTensor(x.shape[1:], standardize_dtype(x.dtype))
+            for x in xs_flat
+        ]
+        _, y = compute_output_spec(
+            f, init, pack_input(x_slice) if x_slice else None
+        )
+        stacked_y = tree.map_structure(
+            lambda y: mx.zeros((0,) + y.shape, dtype=to_mlx_dtype(y.dtype)),
+            y,
+            none_is_leaf=False,
+        )
+        return init, stacked_y
 
     carry = init
     ys = []
@@ -556,16 +619,9 @@ def scan(f, init, xs=None, length=None, reverse=False, unroll=1):
         xs_slice = [x[i] for x in xs_unstacked]
         packed_xs = pack_input(xs_slice) if len(xs_slice) > 0 else None
         carry, y = f(carry, packed_xs)
-        ys.append(y if y is not None else dummy_y)
-    if not ys:
-        # A zero-length scan returns the carry and empty leading-dim stacks.
-        stacked_y = tree.map_structure(
-            lambda y: mx.zeros((0,) + y.shape, dtype=y.dtype),
-            pack_output(dummy_y),
-        )
-        return carry, stacked_y
+        ys.append(y)
     stacked_y = tree.map_structure(
-        lambda *ys: mx.stack(ys), *maybe_reversed(ys)
+        lambda *ys: mx.stack(ys), *maybe_reversed(ys), none_is_leaf=False
     )
     return carry, stacked_y
 
@@ -595,15 +651,6 @@ def dilate(x, axis, dilation_rate):
     result[tuple(slices)] = x
 
     return result
-
-
-def _strided_slice_along_axis(x, start, stop, step, axis):
-    # mlx spreads the grad of a one element strided slice over the range.
-    # Remove once the mlx strided slice vjp is fixed.
-    indices = range(x.shape[axis])[start:stop:step]
-    if len(indices) == 1:
-        start, stop, step = indices[0], indices[0] + 1, 1
-    return slice_along_axis(x, start, stop, step=step, axis=axis)
 
 
 def associative_scan(f, elems, reverse=False, axis=0):
@@ -664,9 +711,12 @@ def associative_scan(f, elems, reverse=False, axis=0):
             return elems
 
         reduced_elems = _combine(
-            [_strided_slice_along_axis(elem, 0, -1, 2, axis) for elem in elems],
             [
-                _strided_slice_along_axis(elem, 1, None, 2, axis)
+                slice_along_axis(elem, 0, -1, step=2, axis=axis)
+                for elem in elems
+            ],
+            [
+                slice_along_axis(elem, 1, None, step=2, axis=axis)
                 for elem in elems
             ],
         )
@@ -675,12 +725,18 @@ def associative_scan(f, elems, reverse=False, axis=0):
         if num_elems % 2 == 0:
             even_elems = _combine(
                 [slice_along_axis(e, 0, -1, axis=axis) for e in odd_elems],
-                [_strided_slice_along_axis(e, 2, None, 2, axis) for e in elems],
+                [
+                    slice_along_axis(e, 2, None, step=2, axis=axis)
+                    for e in elems
+                ],
             )
         else:
             even_elems = _combine(
                 odd_elems,
-                [_strided_slice_along_axis(e, 2, None, 2, axis) for e in elems],
+                [
+                    slice_along_axis(e, 2, None, step=2, axis=axis)
+                    for e in elems
+                ],
             )
 
         even_elems = [
@@ -719,18 +775,17 @@ class custom_gradient:
             lambda x: x.value if isinstance(x, Variable) else x, args
         )
 
+        grad_fn_slot = [None]
+
         @mx.custom_function
         def call(*primals):
-            outputs, _ = fun(*primals, **kwargs)
+            outputs, grad_fn = fun(*primals, **kwargs)
+            grad_fn_slot[0] = grad_fn
             return outputs
 
         @call.vjp
         def call_vjp(primals, cotangent, output):
-            # mlx gives a bare array for one primal and a tuple for several.
-            if not isinstance(primals, (tuple, list)):
-                primals = (primals,)
-            _, grad_fn = fun(*primals, **kwargs)
-            grads = grad_fn(cotangent)
+            grads = grad_fn_slot[0](cotangent)
             if not isinstance(grads, (tuple, list)):
                 grads = (grads,)
             return tuple(grads)
