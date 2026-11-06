@@ -190,6 +190,14 @@ def promote_to_float(x, *others):
     return cast(x, dtypes.promote_to_float_dtype(x.dtype))
 
 
+def lapack_float(x):
+    # The mlx lapack kernels reject the half precision types, so compute those
+    # in float32. Returns the compute input and the dtype to cast back to.
+    if x.dtype in (mx.bfloat16, mx.float16):
+        return x.astype(mx.float32), x.dtype
+    return x, x.dtype
+
+
 def int_dtype_of_size(dtype):
     return {2: mx.int16, 4: mx.int32, 8: mx.int64}[dtype.size]
 

@@ -15,9 +15,7 @@ from keras_mlx.src.ops.core import scatter_update
 from keras_mlx.src.ops.core import to_mlx_dtype
 
 
-def _segment_reduction_fn(
-    data, segment_ids, reduction_method, num_segments, sorted
-):
+def _segment_reduction_fn(data, segment_ids, reduction_method, num_segments):
     data = convert_to_tensor(data)
     segment_ids = convert_to_tensor(segment_ids)
 
@@ -66,21 +64,19 @@ def _segment_reduction_fn(
 
 
 def segment_sum(data, segment_ids, num_segments=None, sorted=False):
-    return _segment_reduction_fn(data, segment_ids, "sum", num_segments, sorted)
+    return _segment_reduction_fn(data, segment_ids, "sum", num_segments)
 
 
 def segment_max(data, segment_ids, num_segments=None, sorted=False):
-    return _segment_reduction_fn(data, segment_ids, "max", num_segments, sorted)
+    return _segment_reduction_fn(data, segment_ids, "max", num_segments)
 
 
 def segment_min(data, segment_ids, num_segments=None, sorted=False):
-    return _segment_reduction_fn(data, segment_ids, "min", num_segments, sorted)
+    return _segment_reduction_fn(data, segment_ids, "min", num_segments)
 
 
 def segment_prod(data, segment_ids, num_segments=None, sorted=False):
-    return _segment_reduction_fn(
-        data, segment_ids, "prod", num_segments, sorted
-    )
+    return _segment_reduction_fn(data, segment_ids, "prod", num_segments)
 
 
 def cdist(x, y):
@@ -328,31 +324,21 @@ def _stft(x, window, nperseg, noverlap, nfft, axis=-1):
     return result
 
 
-def _reflect_pad(x, pad_width, axis=-1):
-    left_pad, right_pad = pad_width
-
-    if left_pad > 0:
-        # A reversed arange view breaks the gather grad on Metal.
-        indices = mx.arange(left_pad, 0, -1, dtype=mx.int32)
-        prefix = mx.take(x, indices, axis=axis)
+def _padded_window(window, sequence_length, l_pad, r_pad, dtype):
+    if window is None:
+        return mx.ones(sequence_length + l_pad + r_pad, dtype=dtype)
+    if isinstance(window, str):
+        # scipy's window matches the jax precision.
+        win = scipy.signal.get_window(window, sequence_length)
     else:
-        prefix = None
-
-    if right_pad > 0:
-        indices = mx.arange(
-            x.shape[axis] - 2, x.shape[axis] - right_pad - 2, -1, dtype=mx.int32
+        win = window
+    win = convert_to_tensor(win, dtype=dtype)
+    if len(win.shape) != 1 or win.shape[-1] != sequence_length:
+        raise ValueError(
+            "The shape of `window` must be equal to (sequence_length,). "
+            f"Received: window shape={win.shape}"
         )
-        suffix = mx.take(x, indices, axis=axis)
-    else:
-        suffix = None
-
-    if prefix is not None and suffix is not None:
-        return mx.concatenate([prefix, x, suffix], axis=axis)
-    elif prefix is not None:
-        return mx.concatenate([prefix, x], axis=axis)
-    elif suffix is not None:
-        return mx.concatenate([x, suffix], axis=axis)
-    return x
+    return mx.pad(win, [[l_pad, r_pad]])
 
 
 def stft(
@@ -378,28 +364,13 @@ def stft(
     x = convert_to_tensor(x)
 
     if center:
-        pad_width = (fft_length // 2, fft_length // 2)
-        x = _reflect_pad(x, pad_width)
+        widths = [(0, 0)] * (x.ndim - 1) + [(fft_length // 2, fft_length // 2)]
+        x = mx.pad(x, widths, mode="reflect")
 
     l_pad = (fft_length - sequence_length) // 2
     r_pad = fft_length - sequence_length - l_pad
 
-    if window is not None:
-        if isinstance(window, str):
-            # use scipy window for now to match precision with jax
-            win = convert_to_tensor(
-                scipy.signal.get_window(window, sequence_length), dtype=x.dtype
-            )
-        else:
-            win = convert_to_tensor(window, dtype=x.dtype)
-        if len(win.shape) != 1 or win.shape[-1] != sequence_length:
-            raise ValueError(
-                "The shape of `window` must be equal to [sequence_length]."
-                f"Received: window shape={win.shape}"
-            )
-        win = mx.pad(win, [[l_pad, r_pad]])
-    else:
-        win = mx.ones((sequence_length + l_pad + r_pad), dtype=x.dtype)
+    win = _padded_window(window, sequence_length, l_pad, r_pad, x.dtype)
 
     result = _stft(
         x,
@@ -413,17 +384,8 @@ def stft(
 
 
 def _overlap_and_add(x, step_size):
-    # Ref: jax.scipy.signal.istft
-    """Utility function compatible with tf.signal.overlap_and_add.
-
-    Args:
-        x: An array with `(..., frames, frame_length)`-shape.
-        step_size: An integer denoting overlap offsets. Must be less than
-        `frame_length`.
-
-    Returns:
-        An array with `(..., output_size)`-shape containing overlapped signal.
-    """
+    # Ref: jax.scipy.signal.istft. Sums (..., frames, frame_length) frames
+    # spaced step_size < frame_length apart into a (..., output_size) signal.
     if x.ndim < 2:
         raise ValueError("Input must have (..., frames, frame_length) shape.")
 
@@ -441,11 +403,8 @@ def _overlap_and_add(x, step_size):
     x = mx.pad(x, ((0, 0), (0, 0), (0, padded_segment_len - segment_len)))
     x = x.reshape((flat_batchsize, nframes, nstep_per_segment, step_size))
 
-    # For obtaining shifted signals, this routine reinterprets flattened
-    # array with a shrinked axis.  With appropriate truncation/ padding,
-    # this operation pushes the last padded elements of the previous row
-    # to the head of the current row.
-    # See implementation of `overlap_and_add` in Tensorflow for details.
+    # Reinterpret the flattened array with a shrunk axis so padding pushes the
+    # last elements of each row to the next row's head, like tf overlap_and_add.
     x = x.transpose((0, 2, 1, 3))  # x: (B, S, N, T)
     x = mx.pad(x, ((0, 0), (0, 0), (0, nframes), (0, 0)))  # x: (B, S, N*2, T)
     shrinked = x.shape[2] - 1
@@ -543,21 +502,7 @@ def istft(
     l_pad = (fft_length - sequence_length) // 2
     r_pad = fft_length - sequence_length - l_pad
 
-    if window is not None:
-        if isinstance(window, str):
-            win = convert_to_tensor(
-                scipy.signal.get_window(window, sequence_length), dtype=dtype
-            )
-        else:
-            win = convert_to_tensor(window, dtype=dtype)
-        if len(win.shape) != 1 or win.shape[-1] != sequence_length:
-            raise ValueError(
-                "The shape of `window` must be equal to [sequence_length]."
-                f"Received: window shape={win.shape}"
-            )
-        win = mx.pad(win, [[l_pad, r_pad]])
-    else:
-        win = mx.ones((sequence_length + l_pad + r_pad), dtype=dtype)
+    win = _padded_window(window, sequence_length, l_pad, r_pad, dtype)
 
     x = _istft(
         x,
@@ -614,10 +559,8 @@ _LANCZOS_COEFFICIENTS = (
     9.9843695780195716e-6,
     1.5056327351493116e-7,
 )
-# Numerical Recipes leaves both incomplete gamma branches as soon as a term
-# stops moving the sum, which a traced graph cannot do, so the count is fixed
-# instead. Holding float32 accuracy takes 200 terms where x sits near a and a
-# is large, the slowest corner for either branch.
+# A traced graph cannot stop once terms stop moving the sum as Numerical Recipes
+# does, so use a fixed count. 200 holds float32 accuracy for large a near x.
 _GAMMAINC_ITERATIONS = 200
 # Where the Stirling series takes over from the direct difference below.
 _STIRLING_THRESHOLD = 8.0
@@ -657,10 +600,8 @@ def lgamma(x):
 
 
 def _log_gamma_prefactor(a, x):
-    # log of x ** a * exp(-x) / gamma(a), the factor both incomplete gamma
-    # branches share. The direct form subtracts quantities of order
-    # a * log(a) from each other, which in float32 leaves nothing behind once
-    # a grows, so it is split into two well conditioned pieces instead.
+    # log of x ** a * exp(-x) / gamma(a), shared by both incomplete gamma
+    # branches. It is split because the direct form cancels badly in float32.
     delta = x - a
     # 1. a * log(x / a) - (x - a), which stays small around x equal to a.
     scaled = a * mx.log1p(delta / a) - delta
