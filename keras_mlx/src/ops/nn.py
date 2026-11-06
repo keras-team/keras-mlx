@@ -178,7 +178,8 @@ def hard_sigmoid(x):
     x = convert_to_tensor(x)
     # mlx promotes ints on its own, but to float32 rather than floatx.
     x = promote_to_float(x)
-    return mx.maximum(0, mx.minimum(1, x / 6 + 0.5))
+    # clip sends a tie's gradient to the bound, so it is 0 at +-3 like jax.
+    return mx.clip(x / 6 + 0.5, 0, 1)
 
 
 def hard_silu(x):
@@ -188,7 +189,9 @@ def hard_silu(x):
 
 def elu(x, alpha=1.0):
     x = convert_to_tensor(x)
-    xneg = mx.minimum(x, 0)
+    # mlx gives a tie's gradient to the second operand, so x == 0 takes the
+    # exp branch like jax.
+    xneg = mx.minimum(0, x)
     xpos = mx.maximum(x, 0)
     if alpha != 1:
         xneg = alpha * (mx.exp(xneg) - 1)
@@ -201,7 +204,8 @@ def selu(x):
     alpha = 1.6732632423543772848170429916717
     scale = 1.0507009873554804934193349852946
     x = convert_to_tensor(x)
-    xneg = mx.minimum(x, 0)
+    # As in elu, x == 0 takes the exp branch.
+    xneg = mx.minimum(0, x)
     xpos = mx.maximum(x, 0)
     return scale * (xpos + alpha * (mx.exp(xneg) - 1))
 
@@ -358,7 +362,8 @@ def _sliding_windows(x, window_shape, window_strides):
     final_strides += strides[1:-1]
     final_strides += strides[-1:]  # should always be [1]
 
-    return mx.as_strided(x, final_shape, final_strides)
+    # mlx as_strided only flattens a strided view, remove once it copies it.
+    return mx.as_strided(mx.contiguous(x), final_shape, final_strides)
 
 
 def _pool(

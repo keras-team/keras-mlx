@@ -60,6 +60,16 @@ def _is_h5py_dataset(obj):
     )
 
 
+def _astype(x, dtype):
+    # mlx sends the gradient through a float to int cast, jax and torch stop
+    # it. Remove once mlx stops it too.
+    if mx.issubdtype(x.dtype, mx.inexact) and not mx.issubdtype(
+        dtype, mx.inexact
+    ):
+        return mx.stop_gradient(x.astype(dtype))
+    return x.astype(dtype)
+
+
 def convert_to_tensor(x, dtype=None, sparse=None, ragged=None):
     if sparse:
         raise ValueError("`sparse=True` is not supported with mlx backend")
@@ -70,11 +80,11 @@ def convert_to_tensor(x, dtype=None, sparse=None, ragged=None):
     if is_tensor(x):
         if dtype is None or x.dtype == mlx_dtype:
             return x
-        return x.astype(mlx_dtype)
+        return _astype(x, mlx_dtype)
 
     if isinstance(x, Variable):
         if dtype and standardize_dtype(dtype) != x.dtype:
-            return x.value.astype(mlx_dtype)
+            return _astype(x.value, mlx_dtype)
         return x.value
 
     if isinstance(x, np.ndarray):
@@ -792,6 +802,12 @@ def remat(f):
     return f
 
 
+def _numpy_leaves_to_tensors(x):
+    return tree.map_structure(
+        lambda t: convert_to_tensor(t) if isinstance(t, np.ndarray) else t, x
+    )
+
+
 def grad(f, argnums=0):
     def scalar_f(*args, **kwargs):
         # A gradient tape sums a non scalar output, so do the same here.
@@ -799,7 +815,9 @@ def grad(f, argnums=0):
 
     def grad_fn(*args, **kwargs):
         positions = standardize_argnums(argnums, len(args))
-        args = list(args)
+        # A numpy array on the left of an mx.array op drops the trace.
+        args = [_numpy_leaves_to_tensors(arg) for arg in args]
+        kwargs = {k: _numpy_leaves_to_tensors(v) for k, v in kwargs.items()}
         for i in positions:
             args[i] = tree.map_structure(convert_to_tensor, args[i])
         grads = mx.grad(scalar_f, argnums=positions)(*args, **kwargs)
