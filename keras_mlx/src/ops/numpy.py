@@ -12,12 +12,13 @@ from keras.src.backend.common import standardize_dtype
 from keras.src.backend.common.backend_utils import canonicalize_axis
 from keras.src.backend.common.backend_utils import normalize_shift_and_axis
 from keras.src.backend.common.backend_utils import vectorize_impl
+from keras_mlx.src.ops.core import _SCATTER_UNSUPPORTED_GPU_DTYPES
 from keras_mlx.src.ops.core import cast
 from keras_mlx.src.ops.core import convert_to_tensor
 from keras_mlx.src.ops.core import convert_to_tensors
 from keras_mlx.src.ops.core import int_dtype_of_size
+from keras_mlx.src.ops.core import lapack_float
 from keras_mlx.src.ops.core import scatter
-from keras_mlx.src.ops.core import slice
 from keras_mlx.src.ops.core import to_mlx_dtype
 
 
@@ -27,8 +28,8 @@ def _result_dtype(*xs):
 
 
 def _promote(*xs):
-    # mlx promotes uint32 + signed to int32, keras/jax want int64. Cast to
-    # result_type so the output dtype matches the other backends.
+    # mlx promotes 64-bit ints and uint32 with a signed int to 64-bit, while the
+    # keras lattice gives int32 or uint32. Cast to result_type to follow it.
     dtype = _result_dtype(*xs)
     return [convert_to_tensor(x, dtype) for x in xs]
 
@@ -39,19 +40,8 @@ def add(x1, x2):
 
 
 def _contraction_dtypes(result_dtype):
-    """The compute and result dtypes for a contraction.
-
-    mlx has no integer contraction kernel, so integer and bool inputs run in
-    float32 and cast back, which is what `matmul` already did. That holds
-    exactly to 2**24, and it is the products that have to fit, not the
-    inputs.
-
-    Args:
-        result_dtype: The promoted dtype the contraction should return.
-
-    Returns:
-        The dtype to compute in and the dtype to return.
-    """
+    # mlx has no integer contraction kernel, so ints and bools compute in
+    # float32, exact while the products stay below 2**24.
     out_dtype = to_mlx_dtype(result_dtype)
     standardized = standardize_dtype(result_dtype)
     if "int" in standardized or standardized == "bool":
@@ -146,21 +136,23 @@ def _empty_result_shape(x, axis, keepdims):
         return _reduced_shape(x.shape, axis, keepdims)
 
 
+def _empty_extremum(x, axis, keepdims, initial, name):
+    # mlx cannot reduce a zero size array, so build the max or min directly.
+    # Like numpy, an initial value is only required when a reduced axis is
+    # empty and the output is not.
+    out_shape = _reduced_shape(x.shape, axis, keepdims)
+    needs_initial = _reduces_empty_axis(x.shape, axis) and 0 not in out_shape
+    if needs_initial and initial is None:
+        raise ValueError(f"Cannot compute the {name} of an empty tensor.")
+    fill = initial if needs_initial else 0
+    # mx.full mishandles dtype=bool with an int fill.
+    return mx.full(out_shape, fill).astype(x.dtype)
+
+
 def max(x, axis=None, keepdims=False, initial=None):
     x = convert_to_tensor(x)
     if 0 in x.shape:
-        # mlx cannot reduce a zero size array, so build the result directly.
-        # An initial value is only required when a reduced axis is empty and
-        # the output is non-empty, matching numpy.
-        out_shape = _reduced_shape(x.shape, axis, keepdims)
-        needs_initial = (
-            _reduces_empty_axis(x.shape, axis) and 0 not in out_shape
-        )
-        if needs_initial and initial is None:
-            raise ValueError("Cannot compute the max of an empty tensor.")
-        fill = initial if needs_initial else 0
-        # mx.full mishandles dtype=bool with an int fill.
-        return mx.full(out_shape, fill).astype(x.dtype)
+        return _empty_extremum(x, axis, keepdims, initial, "max")
 
     result = mx.max(x, axis=axis, keepdims=keepdims)
     if initial is not None:
@@ -198,7 +190,6 @@ def absolute(x):
 
 
 def abs(x):
-    x = convert_to_tensor(x)
     return absolute(x)
 
 
@@ -315,6 +306,9 @@ def argsort(x, axis=-1):
 
 def argpartition(x, kth, axis=-1):
     x = convert_to_tensor(x)
+    # Metal has no bool partition kernel, partition bool keys as int8.
+    if x.dtype == mx.bool_:
+        x = x.astype(mx.int8)
     # cast to int32 to align with other backends
     indices = mx.argpartition(x, kth, axis)
     return mx.stop_gradient(indices).astype(mx.int32)
@@ -397,7 +391,7 @@ def bitwise_xor(x, y):
     return mx.bitwise_xor(x, y)
 
 
-def bitwise_left_shift(x, y):
+def _shift(op, x, y):
     # Take the result dtype before converting so Python scalars stay weak.
     result_dtype = _result_dtype(x, y)
     # jax and numpy shift booleans as integers.
@@ -406,13 +400,15 @@ def bitwise_left_shift(x, y):
     x = convert_to_tensor(x)
     if not isinstance(y, int):
         y = convert_to_tensor(y)
-
     mlx_result_dtype = to_mlx_dtype(result_dtype)
-
-    result = mx.left_shift(x, y)
+    result = op(x, y)
     if result.dtype != mlx_result_dtype:
         return result.astype(mlx_result_dtype)
     return result
+
+
+def bitwise_left_shift(x, y):
+    return _shift(mx.left_shift, x, y)
 
 
 def left_shift(x, y):
@@ -420,21 +416,7 @@ def left_shift(x, y):
 
 
 def bitwise_right_shift(x, y):
-    # Take the result dtype before converting so Python scalars stay weak.
-    result_dtype = _result_dtype(x, y)
-    # jax and numpy shift booleans as integers.
-    if result_dtype == "bool":
-        result_dtype = "int32"
-    x = convert_to_tensor(x)
-    if not isinstance(y, int):
-        y = convert_to_tensor(y)
-
-    mlx_result_dtype = to_mlx_dtype(result_dtype)
-
-    result = mx.right_shift(x, y)
-    if result.dtype != mlx_result_dtype:
-        return result.astype(mlx_result_dtype)
-    return result
+    return _shift(mx.right_shift, x, y)
 
 
 def right_shift(x, y):
@@ -481,14 +463,16 @@ def broadcast_to(x, shape):
     return mx.broadcast_to(x, shape)
 
 
+def _float_dtype_int64_as_floatx(dtype):
+    # int64 maps to floatx rather than float64, the rest promote with float.
+    if standardize_dtype(dtype) == "int64":
+        return config.floatx()
+    return result_type(dtype, float)
+
+
 def ceil(x):
     x = convert_to_tensor(x)
-    if standardize_dtype(x.dtype) == "int64":
-        dtype = config.floatx()
-    else:
-        dtype = result_type(x.dtype, float)
-    mlx_dtype = to_mlx_dtype(dtype)
-    x = x.astype(mlx_dtype)
+    x = x.astype(to_mlx_dtype(_float_dtype_int64_as_floatx(x.dtype)))
     return mx.ceil(x)
 
 
@@ -517,7 +501,6 @@ def conjugate(x):
 
 
 def conj(x):
-    x = convert_to_tensor(x)
     return conjugate(x)
 
 
@@ -546,7 +529,7 @@ def cosh(x):
 
 def count_nonzero(x, axis=None):
     x = convert_to_tensor(x)
-    return (x != 0).astype(mx.int32).sum(axis=axis)
+    return mx.count_nonzero(x, axis=axis)
 
 
 def cross(x1, x2, axisa=-1, axisb=-1, axisc=-1, axis=None):
@@ -591,8 +574,9 @@ def cumsum(x, axis=None, dtype=None):
 
 def diag(x, k=0):
     x = convert_to_tensor(x)
-    if x.dtype in [mx.int64, mx.uint64]:
-        return mx.diag(x, k=k, stream=mx.Device(type=mx.DeviceType.cpu))
+    # Building a diagonal matrix scatters, which Metal lacks for these dtypes.
+    if x.ndim == 1 and x.dtype in _SCATTER_UNSUPPORTED_GPU_DTYPES:
+        return mx.diag(x, k=k, stream=mx.cpu)
     return mx.diag(x, k=k)
 
 
@@ -605,19 +589,7 @@ def diff(a, n=1, axis=-1):
     a = convert_to_tensor(a)
     if n <= 0:
         return a
-
-    if axis < 0:
-        axis = a.ndim + axis
-
-    start1 = [0] * a.ndim
-    start2 = [0] * a.ndim
-    shape = list(a.shape)
-    shape[axis] -= 1
-
-    start1[axis] = 1
-    out = slice(a, start1, shape) - slice(a, start2, shape)
-
-    return diff(out, n - 1, axis) if n > 1 else out
+    return mx.diff(a, n=n, axis=axis)
 
 
 def digitize(x, bins):
@@ -673,19 +645,21 @@ def equal(x1, x2):
     return mx.equal(x1, x2)
 
 
-def exp(x):
+def _cast_ints_to_floatx(x):
     x = convert_to_tensor(x)
-    ori_dtype = standardize_dtype(x.dtype)
-    if "int" in ori_dtype or ori_dtype == "bool":
-        x = cast(x, config.floatx())
+    dtype = standardize_dtype(x.dtype)
+    if "int" in dtype or dtype == "bool":
+        return cast(x, config.floatx())
+    return x
+
+
+def exp(x):
+    x = _cast_ints_to_floatx(x)
     return mx.exp(x)
 
 
 def exp2(x):
-    x = convert_to_tensor(x)
-    ori_dtype = standardize_dtype(x.dtype)
-    if "int" in ori_dtype or ori_dtype == "bool":
-        x = cast(x, config.floatx())
+    x = _cast_ints_to_floatx(x)
     return mx.power(2, x)
 
 
@@ -695,10 +669,7 @@ def expand_dims(x, axis):
 
 
 def expm1(x):
-    x = convert_to_tensor(x)
-    ori_dtype = standardize_dtype(x.dtype)
-    if "int" in ori_dtype or ori_dtype == "bool":
-        x = cast(x, config.floatx())
+    x = _cast_ints_to_floatx(x)
     # mlx's native GPU `expm1` kernel loses precision away from zero, while
     # `exp(x) - 1` catastrophically cancels near zero. Use whichever is
     # accurate for the input's magnitude.
@@ -727,12 +698,7 @@ def flip(x, axis=None):
 
 def floor(x):
     x = convert_to_tensor(x)
-    dtype = (
-        config.floatx()
-        if standardize_dtype(x.dtype) == "int64"
-        else result_type(x.dtype, float)
-    )
-    x = cast(x, dtype)
+    x = cast(x, _float_dtype_int64_as_floatx(x.dtype))
     return mx.floor(x)
 
 
@@ -911,9 +877,6 @@ def maximum(x1, x2):
 
 
 def median(x, axis=None, keepdims=False):
-    # mlx's median axis must be an int, a sequence of ints, or None.
-    if isinstance(axis, list):
-        axis = tuple(axis)
     x = convert_to_tensor(x)
     result_dtype = result_type(x.dtype, float)
     x = x.astype(_mlx_result_dtype(result_dtype))
@@ -928,18 +891,7 @@ def meshgrid(*x, indexing="xy"):
 def min(x, axis=None, keepdims=False, initial=None):
     x = convert_to_tensor(x)
     if 0 in x.shape:
-        # mlx cannot reduce a zero size array, so build the result directly.
-        # An initial value is only required when a reduced axis is empty and
-        # the output is non-empty, matching numpy.
-        out_shape = _reduced_shape(x.shape, axis, keepdims)
-        needs_initial = (
-            _reduces_empty_axis(x.shape, axis) and 0 not in out_shape
-        )
-        if needs_initial and initial is None:
-            raise ValueError("Cannot compute the min of an empty tensor.")
-        fill = initial if needs_initial else 0
-        # mx.full mishandles dtype=bool with an int fill.
-        return mx.full(out_shape, fill).astype(x.dtype)
+        return _empty_extremum(x, axis, keepdims, initial, "min")
 
     result = mx.min(x, axis=axis, keepdims=keepdims)
     if initial is not None:
@@ -999,11 +951,8 @@ def ndim(x):
 
 
 def _unique_prepare(elements, ndim):
-    # Sort the elements (rows lexicographically when ndim is 2) with a
-    # stable order and mark the start of each group of equal elements.
-    # The first occurrence semantics of return_index, and the
-    # lexicographic row sort below, both rely on mx.argsort being
-    # stable, which matches numpy and jax.
+    # Stable-sort the elements (rows lexicographically if ndim is 2) and mark
+    # each group start. The row sort and return_index rely on a stable argsort.
     n = elements.shape[0]
     if ndim == 1:
         order = argsort(elements)
@@ -1037,10 +986,8 @@ def _unique_prepare(elements, ndim):
 def nonzero(x):
     x = convert_to_tensor(x)
     flat_mask = (x != 0).reshape(-1)
-    # The number of nonzero entries determines the output shape, so this
-    # op is eager only, like on every other backend. A stable argsort
-    # moves the flat indices of the nonzero entries to the front in
-    # ascending order.
+    # The nonzero count sets the output shape, so this is eager only like on
+    # other backends. A stable argsort moves the nonzero flat indices first.
     count = int(mx.sum(flat_mask))
     flat_idx = argsort(mx.logical_not(flat_mask))[:count]
     strides = []
@@ -1080,10 +1027,7 @@ def ones_like(x, dtype=None):
 
 def outer(x1, x2):
     x1, x2 = _promote(x1, x2)
-    x1 = x1.reshape(-1)
-    x2 = x2.reshape(-1)
-
-    return x1[:, None] * x2[None, :]
+    return mx.outer(x1, x2)
 
 
 def pad(x, pad_width, mode="constant", constant_values=None):
@@ -1146,11 +1090,9 @@ def _quantile_flatten_axis(x, axis):
 def _quantile(
     x, q, axis=None, method="linear", keepdims=False, nan_aware=False
 ):
-    # Ported from the tensorflow backend, which follows
-    # tfp.stats.percentile, extended with per slice valid counts for the
-    # nan aware variants, whose nans sort last. Index math runs in
-    # float32 because float64 is not available on the GPU, which limits
-    # exact indexing to axis lengths below 2**24.
+    # Ported from the tf backend. Nans sort last, so per slice valid counts
+    # index the right values. Index math is float32 since Metal has no
+    # float64, so it is exact below 2**24.
     if axis is not None and not isinstance(axis, (tuple, list)):
         axis = [axis]
     q_full = convert_to_tensor(q, dtype="float32")
@@ -1457,10 +1399,7 @@ def triu(x, k=0):
 
 def trunc(x):
     x = convert_to_tensor(x)
-    dtype = standardize_dtype(x.dtype)
-    if "int" in dtype or "bool" == dtype:
-        return x
-    return mx.where(x < 0, mx.ceil(x), mx.floor(x))
+    return mx.trunc(x)
 
 
 def vdot(x1, x2):
@@ -1592,14 +1531,6 @@ def sum(x, axis=None, keepdims=False):
 
 
 def eye(N, M=None, k=0, dtype=None):
-    # mlx silently converts a float-valued 0-d array to int, numpy raises.
-    for arg in (N, M):
-        arg_dtype = getattr(arg, "dtype", None)
-        if arg_dtype is not None and "float" in standardize_dtype(arg_dtype):
-            raise TypeError(
-                f"Argument to `eye` must be an integer, received dtype "
-                f"{standardize_dtype(arg_dtype)}."
-            )
     dtype = to_mlx_dtype(dtype or config.floatx())
     M = N if M is None else M
     k = 0 if k is None else k
@@ -1711,11 +1642,7 @@ def slogdet(x):
     std = standardize_dtype(x.dtype)
     if "int" in std or std == "bool":
         x = x.astype(mx.float32)
-    # The mlx lapack kernels take float32 and float64 but reject the half
-    # precision types, so compute those in float32 and cast back.
-    target = x.dtype
-    if x.dtype in (mx.bfloat16, mx.float16):
-        x = x.astype(mx.float32)
+    x, target = lapack_float(x)
     # An exact zero pivot gives sign 0 and log(0) = -inf, which the eigenvalue
     # product cannot, and no complex division is needed.
     with mx.stream(mx.cpu):
@@ -1875,9 +1802,7 @@ def searchsorted(sorted_sequence, values, side="left"):
     sorted_size = sorted_sequence.size
     search_size = values.size
 
-    # TODO: swap to mlx implementation if exists in the future
-    # current implementation and search choice based on discussion:
-    # https://github.com/ml-explore/mlx/issues/1255
+    # mx.searchsorted cannot vmap over the sorted sequence, so search here.
     use_linear = sorted_size <= 1024 or (
         sorted_size <= 16384 and search_size <= 256
     )
@@ -1890,12 +1815,7 @@ def searchsorted(sorted_sequence, values, side="left"):
 
 def diagflat(x, k=0):
     x = convert_to_tensor(x)
-
-    # GPU scatter does not yet support int64 or complex64
-    # for the input or updates.
-    stream = mx.cpu if x.dtype in [mx.int64, mx.complex64] else None
-
-    return mx.diag(mx.reshape(x, [-1]), k, stream=stream)
+    return diag(mx.reshape(x, [-1]), k)
 
 
 def rot90(array, k=1, axes=(0, 1)):
@@ -1959,7 +1879,9 @@ def signbit(x):
             real_part = mx.real(x)
             return signbit(real_part)
         # Read the sign bit itself, which comparisons miss on -0.0 and -nan.
-        return x.view(int_dtype_of_size(x.dtype)) < 0
+        # View has no vjp, and the sign bit carries no gradient anyway.
+        bits = mx.stop_gradient(x).view(int_dtype_of_size(x.dtype))
+        return bits < 0
     elif x.dtype in (mx.uint8, mx.uint16, mx.uint32, mx.uint64):
         # unsigned integers never negative
         return mx.zeros_like(x).astype(mx.bool_)
@@ -1973,27 +1895,24 @@ def signbit(x):
         raise ValueError(f"Unsupported dtype in `signbit`: {x.dtype}")
 
 
+def _window(window_fn, x):
+    # mx windows reject float and traced lengths.
+    return window_fn(int(x)).astype(to_mlx_dtype(config.floatx()))
+
+
 def bartlett(x):
-    # The window length must be a Python int, mx.bartlett does not accept
-    # scalar arrays for it.
-    return mx.bartlett(int(x)).astype(to_mlx_dtype(config.floatx()))
+    return _window(mx.bartlett, x)
 
 
 def blackman(x):
-    # The window length must be a Python int, mx.blackman does not accept
-    # scalar arrays for it.
-    return mx.blackman(int(x)).astype(to_mlx_dtype(config.floatx()))
+    return _window(mx.blackman, x)
 
 
 def angle(x):
     x = convert_to_tensor(x)
     re = real(x)
     im = imag(x)
-
-    if standardize_dtype(x.dtype) == "int64":
-        dtype = config.floatx()
-    else:
-        dtype = result_type(x.dtype, float)
+    dtype = _float_dtype_int64_as_floatx(x.dtype)
     re = cast(re, dtype)
     im = cast(im, dtype)
     return mx.arctan2(im, re)
@@ -2006,10 +1925,8 @@ def _np_axis(axis):
 
 
 def _mlx_result_dtype(dtype):
-    # mlx has no float64 on the default (GPU) device, so the backend never
-    # materializes float64. Mirror the rest of the backend by downcasting any
-    # float64 result to the configured floatx. 64-bit dtypes are excluded from
-    # the dtype test matrix, so this only affects host int64/float64 inputs.
+    # mlx has no float64 on the GPU, so downcast float64 results to the
+    # configured floatx like the rest of the backend.
     if standardize_dtype(dtype) == "float64":
         return to_mlx_dtype(config.floatx())
     return to_mlx_dtype(dtype)
@@ -2051,13 +1968,19 @@ def array_split(x, indices_or_sections, axis=0):
     return split(x, indices_or_sections, axis=axis)
 
 
+def _float_dtype_int64_as_float64(dtype):
+    # Integers up to 32 bits give floatx, int64 gives float64.
+    dtype = standardize_dtype(dtype)
+    if dtype in ("bool", "int8", "int16", "int32", "uint8", "uint16", "uint32"):
+        return config.floatx()
+    if dtype == "int64":
+        return "float64"
+    return dtype
+
+
 def cbrt(x):
     x = convert_to_tensor(x)
-    dtype = standardize_dtype(x.dtype)
-    if dtype in ("bool", "int8", "int16", "int32", "uint8", "uint16", "uint32"):
-        dtype = config.floatx()
-    elif dtype == "int64":
-        dtype = "float64"
+    dtype = _float_dtype_int64_as_float64(x.dtype)
     x = x.astype(_mlx_result_dtype(dtype))
     # mx.power with a fractional exponent is nan for negative bases, so
     # compute on the magnitude and restore the sign.
@@ -2074,15 +1997,19 @@ def _covariance(x):
     return mx.matmul(x_centered, x_adjoint) / builtins.max(x.shape[1] - 1, 0)
 
 
+def _float_dtype_keep_half(dtype):
+    # 64-bit inputs give float64, half types stay, everything else is floatx.
+    sd = standardize_dtype(dtype)
+    if sd in ("int64", "float64"):
+        return "float64"
+    if sd in ("bfloat16", "float16"):
+        return sd
+    return config.floatx()
+
+
 def corrcoef(x):
     x = convert_to_tensor(x)
-    sd = standardize_dtype(x.dtype)
-    if sd in ("int64", "float64"):
-        dtype = "float64"
-    elif sd in ("bfloat16", "float16"):
-        dtype = sd
-    else:
-        dtype = config.floatx()
+    dtype = _float_dtype_keep_half(x.dtype)
     # Integers and the half precision types compute in float32 for
     # numerical stability. convert_to_tensor has already downcast float64.
     x = x.astype(mx.float32)
@@ -2098,13 +2025,7 @@ def corrcoef(x):
 
 def deg2rad(x):
     x = convert_to_tensor(x)
-    sd = standardize_dtype(x.dtype)
-    if sd in ("int64", "float64"):
-        dtype = "float64"
-    elif sd in ("bfloat16", "float16"):
-        dtype = sd
-    else:
-        dtype = config.floatx()
+    dtype = _float_dtype_keep_half(x.dtype)
     mlx_dtype = _mlx_result_dtype(dtype)
     x = x.astype(mlx_dtype)
     return (x * (math.pi / 180.0)).astype(mlx_dtype)
@@ -2114,22 +2035,12 @@ def dsplit(x, indices_or_sections):
     return split(x, indices_or_sections, axis=2)
 
 
-def _atleast_3d(x):
-    if x.ndim == 0:
-        return x.reshape(1, 1, 1)
-    if x.ndim == 1:
-        return x.reshape(1, x.shape[0], 1)
-    if x.ndim == 2:
-        return x.reshape(x.shape[0], x.shape[1], 1)
-    return x
-
-
 def dstack(xs):
     xs = [convert_to_tensor(x) for x in xs]
     dtype = _mlx_result_dtype(
         result_type(*[standardize_dtype(x.dtype) for x in xs])
     )
-    xs = [_atleast_3d(x).astype(dtype) for x in xs]
+    xs = [mx.atleast_3d(x).astype(dtype) for x in xs]
     return mx.concatenate(xs, axis=2)
 
 
@@ -2148,12 +2059,10 @@ def fabs(x):
 
 
 def fliplr(x):
-    x = convert_to_tensor(x)
     return flip(x, axis=1)
 
 
 def flipud(x):
-    x = convert_to_tensor(x)
     return flip(x, axis=0)
 
 
@@ -2195,10 +2104,8 @@ def fmod(x1, x2):
         # Divide by one where the divisor is zero, as jax does.
         x2 = mx.where(x2 == 0, 1, x2)
     if dtype in ("int8", "int16", "int32"):
-        # Avoid abs, which wraps for the minimum value, and widening, which
-        # int32 has no room for. Shift the mod style remainder back to the sign
-        # of the dividend. A divisor of -1 gives zero and would trap on the
-        # minimum.
+        # abs wraps at the minimum and int32 cannot widen, so shift the mod
+        # remainder to the dividend's sign. Swap a -1 divisor, it would trap.
         r = mx.remainder(x1, mx.where(x2 == -1, mx.ones_like(x2), x2))
         return mx.where((r != 0) & ((r < 0) != (x1 < 0)), r - x2, r)
     # mx.remainder is mod style, taking the sign of the divisor. fmod takes
@@ -2275,24 +2182,16 @@ def geomspace(start, stop, num=50, endpoint=True, dtype=None, axis=0):
 
 
 def hamming(x):
-    # The window length must be a Python int, mx.hamming does not accept
-    # scalar arrays for it.
-    return mx.hamming(int(x)).astype(to_mlx_dtype(config.floatx()))
+    return _window(mx.hamming, x)
 
 
 def hanning(x):
-    # The window length must be a Python int, mx.hanning does not accept
-    # scalar arrays for it.
-    return mx.hanning(int(x)).astype(to_mlx_dtype(config.floatx()))
+    return _window(mx.hanning, x)
 
 
 def heaviside(x1, x2):
     x1, x2 = _promote(x1, x2)
-    dtype = result_type(x1.dtype, x2.dtype)
-    if dtype in ("bool", "int8", "int16", "int32", "uint8", "uint16", "uint32"):
-        dtype = config.floatx()
-    elif dtype == "int64":
-        dtype = "float64"
+    dtype = _float_dtype_int64_as_float64(result_type(x1.dtype, x2.dtype))
     mlx_dtype = _mlx_result_dtype(dtype)
     x1 = x1.astype(mlx_dtype)
     x2 = x2.astype(mlx_dtype)
@@ -2331,10 +2230,8 @@ def hypot(x1, x2):
 
 
 def _i0_float32(abs_x):
-    # Abramowitz and Stegun 9.8.1 and 9.8.2 polynomial approximations of
-    # the modified Bessel function of order zero, on a non-negative
-    # float32 input. The absolute error is below 1.6e-7 for the small
-    # branch and the relative error below 1.9e-7 for the large branch.
+    # Abramowitz and Stegun 9.8.1 and 9.8.2 for the order zero modified Bessel
+    # function. Absolute error < 1.6e-7 (small), relative < 1.9e-7 (large).
     t = mx.square(abs_x / 3.75)
     small = 1 + t * (
         3.5156229
@@ -2498,7 +2395,9 @@ def _nanvar_compute(x, axis, keepdims):
     counts = mx.sum(
         mx.logical_not(nan_mask).astype(x.dtype), axis=axis, keepdims=True
     )
-    means = mx.sum(mx.where(nan_mask, 0, x), axis=axis, keepdims=True) / counts
+    # Mask before the arithmetic so a nan cannot reach the gradient.
+    x = mx.where(nan_mask, 0, x)
+    means = mx.sum(x, axis=axis, keepdims=True) / counts
     squares = mx.where(nan_mask, 0, mx.square(x - means))
     result = mx.sum(squares, axis=axis, keepdims=True) / counts
     if not keepdims:
@@ -2684,13 +2583,7 @@ def ptp(x, axis=None, keepdims=False):
 
 def rad2deg(x):
     x = convert_to_tensor(x)
-    sd = standardize_dtype(x.dtype)
-    if sd in ("int64", "float64"):
-        dtype = "float64"
-    elif sd in ("bfloat16", "float16"):
-        dtype = sd
-    else:
-        dtype = config.floatx()
+    dtype = _float_dtype_keep_half(x.dtype)
     mlx_dtype = _mlx_result_dtype(dtype)
     x = x.astype(mlx_dtype)
     return (x * (180.0 / math.pi)).astype(mlx_dtype)
@@ -2698,11 +2591,7 @@ def rad2deg(x):
 
 def sinc(x):
     x = convert_to_tensor(x)
-    if standardize_dtype(x.dtype) == "int64":
-        dtype = config.floatx()
-    else:
-        dtype = result_type(x.dtype, float)
-    x = x.astype(_mlx_result_dtype(dtype))
+    x = x.astype(_mlx_result_dtype(_float_dtype_int64_as_floatx(x.dtype)))
     # Substitute a safe value at zero before dividing so that the zero
     # branch does not produce a nan gradient through the chain rule.
     x_safe = mx.where(x == 0, 1, x)
@@ -2728,8 +2617,6 @@ def trapezoid(y, x=None, dx=1.0, axis=-1):
     return mx.sum(averages * deltas, axis=-1)
 
 
-# The sorted argument is accepted for API consistency but not forwarded,
-# the implementation always returns sorted unique values.
 def _unique_sized(
     x, size, return_index, return_inverse, return_counts, fill_value
 ):
@@ -2767,6 +2654,7 @@ def unique(
     size=None,
     fill_value=None,
 ):
+    # sorted is ignored, the values always come back sorted.
     x = convert_to_tensor(x)
     if size is not None and axis is None:
         return _unique_sized(

@@ -178,7 +178,8 @@ def hard_sigmoid(x):
     x = convert_to_tensor(x)
     # mlx promotes ints on its own, but to float32 rather than floatx.
     x = promote_to_float(x)
-    return mx.maximum(0, mx.minimum(1, x / 6 + 0.5))
+    # clip sends a tie's gradient to the bound, so it is 0 at +-3 like jax.
+    return mx.clip(x / 6 + 0.5, 0, 1)
 
 
 def hard_silu(x):
@@ -188,7 +189,9 @@ def hard_silu(x):
 
 def elu(x, alpha=1.0):
     x = convert_to_tensor(x)
-    xneg = mx.minimum(x, 0)
+    # mlx gives a tie's gradient to the second operand, so x == 0 takes the
+    # exp branch like jax.
+    xneg = mx.minimum(0, x)
     xpos = mx.maximum(x, 0)
     if alpha != 1:
         xneg = alpha * (mx.exp(xneg) - 1)
@@ -201,7 +204,8 @@ def selu(x):
     alpha = 1.6732632423543772848170429916717
     scale = 1.0507009873554804934193349852946
     x = convert_to_tensor(x)
-    xneg = mx.minimum(x, 0)
+    # As in elu, x == 0 takes the exp branch.
+    xneg = mx.minimum(0, x)
     xpos = mx.maximum(x, 0)
     return scale * (xpos + alpha * (mx.exp(xneg) - 1))
 
@@ -358,7 +362,8 @@ def _sliding_windows(x, window_shape, window_strides):
     final_strides += strides[1:-1]
     final_strides += strides[-1:]  # should always be [1]
 
-    return mx.as_strided(x, final_shape, final_strides)
+    # mlx as_strided only flattens a strided view, remove once it copies it.
+    return mx.as_strided(mx.contiguous(x), final_shape, final_strides)
 
 
 def _pool(
@@ -783,6 +788,21 @@ def sparse_categorical_crossentropy(target, output, from_logits=False, axis=-1):
             f"target.shape={target.shape}, output.shape={output.shape}"
         )
 
+    # Out of range classes give zero loss, as with a one hot target.
+    valid = (target >= 0) & (target < output.shape[-1])
+    target = mx.where(valid, target, 0)
+
+    # mx.fast.cross_entropy raises on empty logits.
+    if (
+        from_logits
+        and output.dtype in (mx.float16, mx.bfloat16, mx.float32)
+        and output.size > 0
+    ):
+        # Up to mlx 0.32.4 its Metal gradient is wrong for logits that are
+        # not row contiguous.
+        loss = mx.fast.cross_entropy(mx.contiguous(output), target)
+        return mx.where(valid, loss, 0).astype(output.dtype)
+
     if from_logits:
         log_prob = log_softmax(output)
     else:
@@ -790,9 +810,6 @@ def sparse_categorical_crossentropy(target, output, from_logits=False, axis=-1):
         output = mx.minimum(mx.maximum(output, epsilon()), 1 - epsilon())
         log_prob = mx.log(output)
 
-    # Out of range classes give zero loss, as with a one hot target.
-    valid = (target >= 0) & (target < output.shape[-1])
-    target = mx.where(valid, target, 0)
     loss = -mx.take_along_axis(log_prob, target[..., None], axis=-1).squeeze(-1)
     return mx.where(valid, loss, 0)
 
@@ -1149,10 +1166,8 @@ def _ctc_beam_search_decode(
     if mask_index is None:
         mask_index = num_classes - 1
 
-    # This is a workaround for the fact that mlx.core.argsort does not support
-    # the order parameter which is used to break ties when scores are equal.
-    # For compatibility with the tensorflow implementation, we flip the inputs
-    # and the mask_index, and then flip the classes back to the correct indices
+    # mx.argsort has no order parameter to break ties, so flip the inputs and
+    # mask_index and flip the classes back, matching the tensorflow backend.
     inputs = flip(inputs, axis=2)
     mask_index = num_classes - mask_index - 1
 
@@ -1429,6 +1444,10 @@ def _dot_product_attention(query, key, value, bias, mask, is_causal, scale):
     return encoded
 
 
+# mlx runs queries up to this length on a vector kernel that has no vjp.
+_SDPA_VECTOR_MAX_QUERY_LEN = 8
+
+
 def _flash_attention(query, key, value, bias, mask, is_causal, scale):
     # mlx's fused kernel wants the heads on axis 1, keras carries them on
     # axis 2.
@@ -1437,23 +1456,43 @@ def _flash_attention(query, key, value, bias, mask, is_causal, scale):
     k = mx.swapaxes(key.astype(dtype), 1, 2)
     v = mx.swapaxes(value.astype(dtype), 1, 2)
 
+    user_mask = mask is not None
+    if user_mask:
+        mask = convert_to_tensor(mask).astype(mx.bool_)
     # mlx aligns its "causal" mask to the bottom right and keras to the top
     # left, so the string only fits when the query and key lengths match.
-    square = q.shape[2] == k.shape[2]
-    if bias is None and mask is None and (square or not is_causal):
-        fused_mask = "causal" if is_causal else None
+    T, S = q.shape[2], k.shape[2]
+    if is_causal and (mask is not None or bias is not None or T != S):
+        causal = mx.tril(mx.ones((T, S), dtype=mx.bool_))
+        mask = causal if mask is None else mx.logical_and(mask, causal)
+        is_causal = False
+
+    if bias is not None:
+        # The kernel takes one additive mask, so fold the mask into the bias.
+        fused_mask = convert_to_tensor(bias).astype(dtype)
+        if mask is not None:
+            fused_mask = mx.where(mask, fused_mask, _get_large_negative(dtype))
     else:
-        # The kernel takes one additive mask, so fold the bias and the mask
-        # into the shape the manual path builds its logits in.
-        logits_shape = (q.shape[0], q.shape[1], q.shape[2], k.shape[2])
-        additive = mx.zeros(logits_shape, dtype=mx.float32)
-        if bias is not None:
-            additive = additive + bias
-        fused_mask = _apply_masks(additive, mask, is_causal).astype(dtype)
+        fused_mask = "causal" if is_causal else mask
+    if T <= _SDPA_VECTOR_MAX_QUERY_LEN and (
+        fused_mask is None or isinstance(fused_mask, str)
+    ):
+        # The maskless vector kernel has no vjp, an explicit mask routes the
+        # gradient to a kernel that has one. Remove once mlx adds the vjp.
+        fused_mask = mx.ones((T, S), dtype=mx.bool_)
+        if is_causal:
+            fused_mask = mx.tril(fused_mask)
 
     encoded = mx.fast.scaled_dot_product_attention(
         q, k, v, scale=scale, mask=fused_mask
     )
+    if user_mask:
+        # The Metal kernel zeroes or skews a fully masked row where the manual
+        # path spreads it evenly, so give such rows the mean of the values.
+        mean_v = mx.mean(v.astype(mx.float32), axis=2, keepdims=True)
+        mean_v = mx.repeat(mean_v, q.shape[1] // v.shape[1], axis=1)
+        attended = mx.any(mask, axis=-1, keepdims=True)
+        encoded = mx.where(attended, encoded, mean_v.astype(dtype))
     return mx.swapaxes(encoded, 1, 2).astype(dtype)
 
 
@@ -1468,9 +1507,6 @@ def dot_product_attention(
     flash_attention=None,
     attn_logits_soft_cap=None,
 ):
-    if flash_attention is None:
-        flash_attention = False
-
     query = convert_to_tensor(query)
     key = convert_to_tensor(key)
     value = convert_to_tensor(value)
@@ -1494,17 +1530,26 @@ def dot_product_attention(
                 f"num_query_heads={num_query_heads}, "
                 f"num_key_value_heads={num_kv_heads}."
             )
-        repeats = num_query_heads // num_kv_heads
-        key = mx.repeat(key, repeats, axis=2)
-        value = mx.repeat(value, repeats, axis=2)
 
     H = key.shape[-1]
     # Keep the default a python float, the fused kernel takes a scalar.
     scale = (1.0 / math.sqrt(H)) if scale is None else scale
+    if flash_attention is None:
+        # A bias would be rounded to the input dtype inside the kernel.
+        dtype = result_type(query.dtype, key.dtype, value.dtype)
+        flash_attention = (
+            bias is None
+            and dtype in ("float16", "bfloat16", "float32")
+            and not isinstance(scale, mx.array)
+        )
     if flash_attention:
         return _flash_attention(
             query, key, value, bias, mask, is_causal, float(scale)
         )
+    if num_query_heads != num_kv_heads:
+        repeats = num_query_heads // num_kv_heads
+        key = mx.repeat(key, repeats, axis=2)
+        value = mx.repeat(value, repeats, axis=2)
     return _dot_product_attention(
         query, key, value, bias, mask, is_causal, scale
     )
@@ -1627,8 +1672,8 @@ def _compute_adaptive_pooling_gather_indices(
 
 
 def _strided_view_1d(x, window_size):
-    # Sliding windows of `window_size` over axis 1, gathered explicitly since
-    # mlx has no stride-trick view. Returns (n, out, window_size, c).
+    # Sliding windows of `window_size` over axis 1, gathered because
+    # mx.as_strided has no vmap. Returns (n, out, window_size, c).
     _, length, _ = x.shape
     out = length - window_size + 1
     idx = mx.arange(out)[:, None] + mx.arange(window_size)[None, :]

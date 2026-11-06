@@ -450,15 +450,13 @@ class Trainer(BaseTrainer):
         return iterator_step
 
     def _eval_captured_arrays(self):
-        # Layers may keep plain mlx arrays outside their variables, as
-        # Normalization does after adapt(). A lazy one carries a graph that
-        # mx.compile reads as an uncaptured input, so materialize them.
-        # Flatten rather than walk `vars` directly, the arrays may sit inside
-        # a list or dict attribute. Already evaluated arrays cost nothing, so
-        # this runs on every build and picks up a later adapt().
+        # Lazy arrays outside variables, like adapt() state, look uncaptured to
+        # mx.compile. Callers run this before their early return, so a later
+        # adapt() is seen.
         captured = [
             value
             for layer in self._flatten_layers()
+            # The arrays can sit inside list or dict attributes.
             for value in tree.flatten(vars(layer))
             if isinstance(value, mx.array)
         ]

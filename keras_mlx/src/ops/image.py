@@ -177,7 +177,7 @@ def _nearest_indices_and_weights(coordinate):
         if _is_integer(coordinate)
         else _round_half_away_from_zero(coordinate)
     )
-    index = coordinate.astype(mx.int32)
+    index = convert_to_tensor(coordinate, dtype="int32")
     return [(index, 1)]
 
 
@@ -185,7 +185,7 @@ def _linear_indices_and_weights(coordinate):
     lower = mx.floor(coordinate)
     upper_weight = coordinate - lower
     lower_weight = 1 - upper_weight
-    index = lower.astype(mx.int32)
+    index = convert_to_tensor(lower, dtype="int32")
     return [(index, lower_weight), (index + 1, upper_weight)]
 
 
@@ -436,10 +436,17 @@ def _resize_nearest(x, output_shape):
     for d in spatial_dims:
         m = input_shape[d]
         n = output_shape[d]
-        offsets = (mx.arange(n, dtype=mx.float32) + 0.5) * m / n
-        offsets = mx.floor(offsets.astype(mx.float32)).astype(mx.int32)
+        # A repeat or strided slice avoids the gather for integer factors.
+        if m and n % m == 0:
+            x = mx.repeat(x, n // m, axis=d)
+            continue
         indices = [slice(None)] * len(input_shape)
-        indices[d] = offsets
+        if m and m % n == 0:
+            indices[d] = slice(m // n // 2, None, m // n)
+        else:
+            offsets = (mx.arange(n, dtype=mx.float32) + 0.5) * m / n
+            offsets = mx.floor(offsets.astype(mx.float32)).astype(mx.int32)
+            indices[d] = offsets
         x = x[tuple(indices)]
     return x
 
@@ -455,11 +462,7 @@ def _fill_lanczos_kernel(radius, x):
 
 
 def _fill_keys_cubic_kernel(x):
-    # Ref: jax.image.resize
-    # http://ieeexplore.ieee.org/document/1163711/
-    # R. G. Keys. Cubic convolution interpolation for digital image processing.
-    # IEEE Transactions on Acoustics, Speech, and Signal Processing,
-    # 29(6):1153–1160, 1981.
+    # Ref: jax.image.resize, Keys cubic convolution (IEEE TASSP 1981).
     out = ((1.5 * x - 2.5) * x) * x + 1.0
     out = mx.where(x >= 1.0, ((-0.5 * x + 2.5) * x - 4.0) * x + 2.0, out)
     return mx.where(x >= 2.0, 0.0, out)
