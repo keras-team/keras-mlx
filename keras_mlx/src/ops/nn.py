@@ -9,12 +9,12 @@ import mlx.nn as nn
 from keras.src.backend.common import is_float_dtype
 from keras.src.backend.common import result_type
 from keras.src.backend.common import standardize_dtype
-from keras.src.backend.common.backend_utils import (
-    _convert_conv_transpose_padding_args_from_keras_to_jax,
-)
 from keras.src.backend.common.backend_utils import canonicalize_axis
 from keras.src.backend.common.backend_utils import (
     compute_adaptive_pooling_window_sizes,
+)
+from keras.src.backend.common.backend_utils import (
+    compute_conv_transpose_padding_args_for_jax,
 )
 from keras.src.backend.config import epsilon
 from keras.src.backend.config import floatx
@@ -55,34 +55,6 @@ def compute_conv_padding_args_for_mlx(
         return (start_paddings, end_paddings)
     else:
         raise ValueError(f"Invalid padding value: {padding}")
-
-
-def compute_conv_transpose_padding_args_for_mlx(
-    padding,
-    num_spatial_dims,
-    kernel_spatial_shape,
-    dilation_rate,
-    strides,
-    output_padding,
-):
-    # The per-dimension padding is the same as for jax. mlx only differs in how
-    # the paddings are packaged, as separate start and end lists.
-    start_paddings = []
-    end_paddings = []
-    for i in range(num_spatial_dims):
-        output_padding_i = None if output_padding is None else output_padding[i]
-        pad_left, pad_right = (
-            _convert_conv_transpose_padding_args_from_keras_to_jax(
-                kernel_size=kernel_spatial_shape[i],
-                stride=strides[i],
-                dilation_rate=dilation_rate[i],
-                padding=padding,
-                output_padding=output_padding_i,
-            )
-        )
-        start_paddings.append(pad_left)
-        end_paddings.append(pad_right)
-    return (start_paddings, end_paddings)
 
 
 def relu(x):
@@ -193,11 +165,9 @@ def elu(x, alpha=1.0):
     # exp branch like jax.
     xneg = mx.minimum(0, x)
     xpos = mx.maximum(x, 0)
-    if alpha != 1:
-        xneg = alpha * (mx.exp(xneg) - 1)
-    else:
-        xneg = mx.exp(xneg) - 1
-    return xneg + xpos
+    # mx.expm1 is within ~35 ulp on Metal for x <= 0. The expm1 op is tighter
+    # but its select doubles the eager and grad time.
+    return alpha * mx.expm1(xneg) + xpos
 
 
 def selu(x):
@@ -207,7 +177,7 @@ def selu(x):
     # As in elu, x == 0 takes the exp branch.
     xneg = mx.minimum(0, x)
     xpos = mx.maximum(x, 0)
-    return scale * (xpos + alpha * (mx.exp(xneg) - 1))
+    return scale * (xpos + alpha * mx.expm1(xneg))
 
 
 def gelu(x, approximate=True):
@@ -264,6 +234,9 @@ def sparsemax(x, axis=-1):
     logits = convert_to_tensor(x)
     # Ints can't hold the fractional results or, if unsigned, the -1 bound.
     logits = promote_to_float(logits)
+    # mlx gathers out of bounds from an empty axis, a segfault on macOS CPU.
+    if logits.size == 0:
+        return logits
     logits_sorted = -mx.sort(-logits, axis=axis)
     logits_cumsum = mx.cumsum(logits_sorted, axis=axis)  # find cumulative sum
     r = mx.arange(1, logits.shape[axis] + 1)  # Determine the sparsity
@@ -478,6 +451,13 @@ def grouped_conv3d(inputs, kernel, groups, **conv_args):
     return mx.concatenate(outputs, axis=-1)
 
 
+def _conv_general(inputs, kernel, groups, **conv_args):
+    # mlx only supports groups in 1D and 2D convolutions.
+    if inputs.ndim == 5 and groups > 1:
+        return grouped_conv3d(inputs, kernel, groups, **conv_args)
+    return mx.conv_general(inputs, kernel, groups=groups, **conv_args)
+
+
 def conv(
     inputs,
     kernel,
@@ -525,28 +505,16 @@ def conv(
         )
     groups = channels // kernel_in_channels
 
-    if num_spatial_dims == 3 and groups > 1:
-        result = grouped_conv3d(
-            inputs,
-            kernel,
-            groups,
-            stride=strides,
-            padding=mlx_padding,
-            kernel_dilation=dilation_rate,
-            input_dilation=1,
-            flip=False,
-        )
-    else:
-        result = mx.conv_general(
-            inputs,
-            kernel,
-            stride=strides,
-            padding=mlx_padding,
-            kernel_dilation=dilation_rate,
-            input_dilation=1,
-            groups=groups,
-            flip=False,
-        )
+    result = _conv_general(
+        inputs,
+        kernel,
+        groups,
+        stride=strides,
+        padding=mlx_padding,
+        kernel_dilation=dilation_rate,
+        input_dilation=1,
+        flip=False,
+    )
     if data_format == "channels_first":
         result = result.transpose(0, -1, *range(1, result.ndim - 1))
 
@@ -594,14 +562,14 @@ def depthwise_conv(
         strides,
     )
 
-    result = mx.conv_general(
+    result = _conv_general(
         inputs,
         kernel,
+        feature_group_count,
         stride=strides,
         padding=mlx_padding,
         kernel_dilation=dilation_rate,
         input_dilation=1,
-        groups=feature_group_count,
         flip=False,
     )
     if data_format == "channels_first":
@@ -656,10 +624,16 @@ def conv_transpose(
     dilation_rate = standardize_tuple(
         dilation_rate, num_spatial_dims, "dilation_rate"
     )
-    if output_padding is not None:
-        output_padding = standardize_tuple(
-            output_padding, num_spatial_dims, "output_padding"
-        )
+    padding_values = compute_conv_transpose_padding_args_for_jax(
+        input_shape=inputs.shape,
+        kernel_shape=kernel.shape,
+        strides=strides,
+        padding=padding,
+        output_padding=output_padding,
+        dilation_rate=dilation_rate,
+    )
+    # mlx takes the jax paddings as separate start and end lists.
+    mlx_padding = tuple(zip(*padding_values))
 
     if data_format == "channels_first":
         # mlx expects channels_last
@@ -667,16 +641,6 @@ def conv_transpose(
 
     # mlx expects kernel with (out_channels, spatial..., in_channels)
     kernel = kernel.transpose(-2, *range(kernel.ndim - 2), -1)
-    kernel_spatial_shape = kernel.shape[1:-1]
-
-    mlx_padding = compute_conv_transpose_padding_args_for_mlx(
-        padding,
-        num_spatial_dims,
-        kernel_spatial_shape,
-        dilation_rate,
-        strides,
-        output_padding,
-    )
 
     channels = inputs.shape[-1]
     kernel_in_channels = kernel.shape[-1]
