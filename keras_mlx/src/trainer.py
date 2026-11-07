@@ -18,6 +18,7 @@ from keras.src.trainers.epoch_iterator import EpochIterator
 from keras.src.trainers.trainer import BaseTrainer
 from keras.src.utils import traceback_utils
 from keras.src.utils.python_utils import pythonify_logs
+from keras_mlx.src import distribution_lib
 from keras_mlx.src.ops.core import convert_to_numpy
 from keras_mlx.src.ops.core import convert_to_tensor
 from keras_mlx.src.random import tracing_compiled_step
@@ -390,18 +391,18 @@ class Trainer(BaseTrainer):
             return super().get_metrics_result()
 
     def _broadcast_weights(self):
-        # Start every replica from the weights of process 0. MLX has no
-        # broadcast, so sum process 0's values with zeros from the others.
+        # Start every replica from the weights of process 0.
         group = _replica_group()
         if group is None:
             return
-        keep = group.rank() == 0
-        for v in self.trainable_variables + self.non_trainable_variables:
+        variables = self.trainable_variables + self.non_trainable_variables
+        for v in variables:
             # Sum bools as integers.
             value = v.value.astype(mx.int32) if v.dtype == "bool" else v.value
-            value = value if keep else mx.zeros_like(value)
-            value = mx.distributed.all_sum(value, group=group)
+            value = distribution_lib.broadcast(value, group)
             v.assign(value.astype(v.value.dtype))
+        # Run the collectives now, while every process is here.
+        mx.eval([v.value for v in variables])
 
     def _make_function(self, step_function, concatenate_outputs=False):
         if self.steps_per_execution > 1:
@@ -480,6 +481,7 @@ class Trainer(BaseTrainer):
         self._eval_captured_arrays()
         if self.test_function is not None and not force:
             return
+        self._broadcast_weights()
         if not self.run_eagerly and self.jit_compile:
             test_step = mx.compile(_with_tracing_flag(self.test_step))
         else:

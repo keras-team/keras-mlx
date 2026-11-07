@@ -11,6 +11,9 @@ import tempfile
 
 import mlx.core as mx
 
+from keras.src.random import seed_generator
+from keras.src.utils import rng_utils
+
 
 def list_devices(device_type=None):
     """Return one device per process, the global devices of the group."""
@@ -69,8 +72,10 @@ def initialize(job_addresses=None, num_processes=None, process_id=None):
     if set_rank:
         os.environ["MLX_RANK"] = str(process_id)
 
+    # A single process runs without a distributed backend.
+    strict = "MLX_HOSTFILE" in os.environ
     try:
-        group = mx.distributed.init(strict=True, backend=backend)
+        group = mx.distributed.init(strict=strict, backend=backend)
     finally:
         # The ring backend reads these once, while connecting.
         if hostfile is not None:
@@ -89,6 +94,25 @@ def initialize(job_addresses=None, num_processes=None, process_id=None):
             f"The MLX distributed group gave this process rank "
             f"{group.rank()}. Received: process_id={process_id}"
         )
+    initialize_rng()
+
+
+def initialize_rng():
+    """Give every process the same global seed, so weights start equal."""
+    if rng_utils.get_random_seed() is not None:
+        return
+    group = mx.distributed.init()
+    if group.size() == 1:
+        return
+    seed = mx.array(seed_generator.make_default_seed(), mx.int32)
+    rng_utils.set_random_seed(broadcast(seed, group).item())
+
+
+def broadcast(x, group):
+    """Return process 0's value of `x` on every process of `group`."""
+    # MLX has no broadcast, so sum process 0's value with zeros.
+    x = x if group.rank() == 0 else mx.zeros_like(x)
+    return mx.distributed.all_sum(x, group=group)
 
 
 def num_processes():
@@ -103,6 +127,8 @@ def process_id():
 
 def distribute_tensor(tensor, layout):
     """Return `tensor` unchanged, only replicated layouts are supported."""
+    if layout is None:
+        return tensor
     if any(axis is not None for axis in layout.axes):
         raise NotImplementedError(
             "The MLX backend only supports replicated layouts, use "
