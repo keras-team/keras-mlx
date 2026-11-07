@@ -469,7 +469,6 @@ class Trainer(BaseTrainer):
         if self.train_function is not None and not force:
             return
         self._broadcast_weights()
-        self._eval_captured_arrays()
         if not self.run_eagerly and self.jit_compile:
             train_step = mx.compile(_with_tracing_flag(self.train_step))
         else:

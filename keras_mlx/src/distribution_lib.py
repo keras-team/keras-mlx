@@ -70,9 +70,7 @@ def initialize(job_addresses=None, num_processes=None, process_id=None):
         backend = "ring"
     set_rank = process_id is not None and "MLX_RANK" not in os.environ
     if set_rank:
-    strict = backend == "ring" or (num_processes is not None and num_processes > 1) or "MLX_HOSTFILE" in os.environ
-    try:
-        group = mx.distributed.init(strict=strict, backend=backend)
+        os.environ["MLX_RANK"] = str(process_id)
 
     # A single process runs without a distributed backend.
     strict = "MLX_HOSTFILE" in os.environ
@@ -132,11 +130,7 @@ def distribute_tensor(tensor, layout):
     if layout is None:
         return tensor
     if any(axis is not None for axis in layout.axes):
-def distribute_tensor(tensor, layout):
-    """Return `tensor` unchanged, only replicated layouts are supported."""
-    if layout is None:
-        return tensor
-    if any(axis is not None for axis in layout.axes):
+        raise NotImplementedError(
             "The MLX backend only supports replicated layouts, use "
             f"`keras.distribution.DataParallel`. Received: layout={layout}"
         )
