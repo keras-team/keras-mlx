@@ -70,7 +70,9 @@ def initialize(job_addresses=None, num_processes=None, process_id=None):
         backend = "ring"
     set_rank = process_id is not None and "MLX_RANK" not in os.environ
     if set_rank:
-        os.environ["MLX_RANK"] = str(process_id)
+    strict = backend == "ring" or (num_processes is not None and num_processes > 1) or "MLX_HOSTFILE" in os.environ
+    try:
+        group = mx.distributed.init(strict=strict, backend=backend)
 
     # A single process runs without a distributed backend.
     strict = "MLX_HOSTFILE" in os.environ
