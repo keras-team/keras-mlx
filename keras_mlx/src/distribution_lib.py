@@ -132,7 +132,11 @@ def distribute_tensor(tensor, layout):
     if layout is None:
         return tensor
     if any(axis is not None for axis in layout.axes):
-        raise NotImplementedError(
+def distribute_tensor(tensor, layout):
+    """Return `tensor` unchanged, only replicated layouts are supported."""
+    if layout is None:
+        return tensor
+    if any(axis is not None for axis in layout.axes):
             "The MLX backend only supports replicated layouts, use "
             f"`keras.distribution.DataParallel`. Received: layout={layout}"
         )
