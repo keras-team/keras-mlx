@@ -7,9 +7,9 @@ import mlx.core as mx
 import numpy as np
 
 from keras.src import tree
+from keras.src.backend import config
 from keras.src.backend.common import KerasVariable as Variable
 from keras.src.backend.common import dtypes
-from keras.src.backend.common import result_type
 from keras.src.backend.common import standardize_dtype
 from keras.src.backend.common.backend_utils import slice_along_axis
 from keras.src.backend.common.backend_utils import standardize_argnums
@@ -51,6 +51,17 @@ def to_mlx_dtype(dtype):
     if standardized_dtype is None:
         raise ValueError(f"Unsupported dtype for MLX: {dtype}")
     return standardized_dtype
+
+
+@functools.lru_cache(512)
+def _cached_result_type(floatx, x64_mode, *args):
+    return dtypes.result_type(*args)
+
+
+def result_type(*args):
+    # Keras standardizes every dtype on each call, which is slow for mlx
+    # dtypes. The result only depends on the dtypes, floatx and x64 mode.
+    return _cached_result_type(config.floatx(), config.x64_mode(), *args)
 
 
 def _is_h5py_dataset(obj):
