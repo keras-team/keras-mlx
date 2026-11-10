@@ -29,10 +29,10 @@ jobs:
     # ubuntu-latest is 4 vCPU and 16G, and the suite does not fit in it. It
     # grows to about 5.5G in a single process and dies roughly one run in
     # four. That is not backend specific, ops/numpy_test.py retains about
-    # 3.7G under numpy too. keras runs the same suite on linux-x86-n2-16, so
+    # 3.7G under numpy too. keras runs the same suite on linux-x86-n4-16, so
     # run it there. Those runners need a container, so follow the keras setup.
     name: Run tests on linux
-    runs-on: linux-x86-n2-16
+    runs-on: linux-x86-n4-16
     container:
       image: python:3.11-slim
     timeout-minutes: 120
