@@ -97,7 +97,7 @@ jobs:
         # tests by file, which is how keras itself runs them.
         run: |
           set -o pipefail
-          pytest keras -n auto --dist loadfile --ignore keras/src/applications --ignore keras/src/wrappers | tee "$RUNNER_TEMP/pytest.log"
+          pytest keras -n 8 --dist loadfile --ignore keras/src/applications --ignore keras/src/wrappers | tee "$RUNNER_TEMP/pytest.log"
 
       - name: Run the sklearn wrapper tests
         working-directory: ./keras
