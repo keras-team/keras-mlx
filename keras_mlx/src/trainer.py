@@ -253,8 +253,24 @@ class Trainer(BaseTrainer):
             metrics_variables,
         ) = state
         x, y, sample_weight = data_adapter_utils.unpack_x_y_sample_weight(data)
-        grad_fn = mx.value_and_grad(self.compute_loss_and_updates)
         group = _replica_group()
+        assigned = []
+
+        def loss_and_updates(trainable, non_trainable, *args, **kwargs):
+            outputs = self.compute_loss_and_updates(
+                trainable, non_trainable, *args, **kwargs
+            )
+            _, _, _, new_non_trainable, _ = outputs
+            # Unassigned variables, like frozen weights, come back as the
+            # input arrays. mx.value_and_grad returns new array objects, so
+            # compare them here.
+            assigned[:] = [
+                new is not old
+                for new, old in zip(new_non_trainable, non_trainable)
+            ]
+            return outputs
+
+        grad_fn = mx.value_and_grad(loss_and_updates)
 
         if trainable_variables:
             (
@@ -292,7 +308,7 @@ class Trainer(BaseTrainer):
                 y_pred,
                 non_trainable_variables,
                 metrics_variables,
-            ) = self.compute_loss_and_updates(
+            ) = loss_and_updates(
                 trainable_variables,
                 non_trainable_variables,
                 metrics_variables,
@@ -304,12 +320,12 @@ class Trainer(BaseTrainer):
             )
 
         if group is not None:
-            # Average the float state, like the BatchNormalization moving
-            # mean, so the replicas stay equal.
+            # Average the float state the step assigned, like the
+            # BatchNormalization moving mean, so the replicas stay equal.
             floats = [
                 i
                 for i, v in enumerate(non_trainable_variables)
-                if mx.issubdtype(v.dtype, mx.floating)
+                if assigned[i] and mx.issubdtype(v.dtype, mx.floating)
             ]
             averaged = average_gradients(
                 [non_trainable_variables[i] for i in floats], group

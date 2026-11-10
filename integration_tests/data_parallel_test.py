@@ -10,12 +10,15 @@ import socket
 import subprocess
 import sys
 import tempfile
+from unittest import mock
 
+import mlx.core as mx
 import numpy as np
 
 import keras
 from keras.src import testing
 from keras.src.backend import distribution_lib as backend_dlib
+from keras_mlx.src import trainer
 
 NUM_PROCESSES = 2
 PER_PROCESS_BATCH = 8
@@ -80,6 +83,7 @@ def _worker(out_dir):
         evaluated=evaluated,
         weights=_flat_weights(model),
         loss=history.history["loss"],
+        mae=history.history["mae"],
     )
 
 
@@ -125,6 +129,31 @@ class DataParallelTest(testing.TestCase):
         x, y = _data()
         with self.assertRaises(NotImplementedError):
             _model(seed=0).fit(x, y, verbose=0)
+
+    def test_frozen_weights_are_not_averaged(self):
+        model = keras.Sequential(
+            [
+                keras.Input((4,)),
+                keras.layers.Dense(8, trainable=False),
+                keras.layers.BatchNormalization(),
+                keras.layers.Dense(1),
+            ]
+        )
+        model.compile(optimizer="sgd", loss="mse")
+        averaged = []
+
+        def average_gradients(values, group):
+            averaged.append(len(values))
+            return values
+
+        x, y = _data()
+        with (
+            mock.patch.object(trainer, "_replica_group", mx.distributed.init),
+            mock.patch.object(trainer, "average_gradients", average_gradients),
+        ):
+            model.fit(x, y, batch_size=16, epochs=1, verbose=0)
+        # The gradients, then the moving mean and variance.
+        self.assertEqual(averaged[:2], [4, 2])
 
     def test_matches_single_process(self):
         addresses = ",".join(
@@ -187,6 +216,7 @@ class DataParallelTest(testing.TestCase):
         for result in results:
             self.assertAllClose(result["weights"], _flat_weights(model))
             self.assertAllClose(result["loss"], history.history["loss"])
+            self.assertAllClose(result["mae"], history.history["mae"])
         self.assertAllEqual(results[0]["weights"], results[1]["weights"])
 
 
