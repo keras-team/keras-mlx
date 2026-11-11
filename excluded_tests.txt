@@ -26,9 +26,6 @@ keras/src/layers/layer_test.py::LoraLessQuantizationTest::test_float8_quantize_a
 # RandomCrop slices with array bounds, and mlx only takes ints there.
 keras/src/layers/preprocessing/image_preprocessing/random_crop_test.py::RandomCropTest::test_dict_input
 keras/src/layers/preprocessing/image_preprocessing/random_crop_test.py::RandomCropTest::test_random_crop
-keras/src/models/functional_test.py::FunctionalTest::test_required_none_raises_in_fit
-keras/src/models/model_test.py::ModelTest::test_functional_optional_inputs_generator_optional_none
-keras/src/models/model_test.py::ModelTest::test_functional_optional_inputs_optional_none
 keras/src/models/model_test.py::ModelTest::test_quantize_float8
 keras/src/ops/core_test.py::CoreOpsCorrectnessTest::test_cast_float8_float8_e4m3fn
 keras/src/ops/core_test.py::CoreOpsCorrectnessTest::test_cast_float8_float8_e5m2
