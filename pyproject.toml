@@ -38,6 +38,10 @@ dependencies = [
 Home = "https://keras.io/"
 Repository = "https://github.com/keras-team/keras-mlx/"
 
+[tool.setuptools.packages.find]
+# Keep integration_tests out of the wheel.
+include = ["keras_mlx*"]
+
 [tool.setuptools.dynamic]
 version = {attr = "keras_mlx.src.version.__version__"}
 

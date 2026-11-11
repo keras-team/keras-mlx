@@ -117,6 +117,10 @@ jobs:
           # A script gets its own folder on sys.path, not the cwd.
           PYTHONPATH=. python integration_tests/numerical_test.py
 
+      - name: Run the keras-mlx tests
+        working-directory: ./keras
+        run: python -m pytest ../keras-mlx/integration_tests
+
       - name: Collect failed tests
         id: summary
         if: always()
@@ -200,6 +204,10 @@ jobs:
           python -m pytest integration_tests/import_test.py
           # A script gets its own folder on sys.path, not the cwd.
           PYTHONPATH=. python integration_tests/numerical_test.py
+
+      - name: Run the keras-mlx tests
+        working-directory: ./keras
+        run: python -m pytest ../keras-mlx/integration_tests
 
       - name: Collect failed tests
         id: summary
