@@ -274,6 +274,8 @@ def arctanh(x):
 
 def argmax(x, axis=None, keepdims=False):
     x = convert_to_tensor(x)
+    # mlx errors on keepdims with a 0-d input, jax returns a 0-d index.
+    keepdims = keepdims and x.ndim > 0
     # mlx rejects empty input, but jax returns an empty result here.
     empty_shape = _empty_result_shape(x, axis, keepdims)
     if empty_shape is not None:
@@ -286,6 +288,7 @@ def argmax(x, axis=None, keepdims=False):
 
 def argmin(x, axis=None, keepdims=False):
     x = convert_to_tensor(x)
+    keepdims = keepdims and x.ndim > 0
     empty_shape = _empty_result_shape(x, axis, keepdims)
     if empty_shape is not None:
         return mx.zeros(empty_shape, mx.int32)
@@ -670,10 +673,10 @@ def expand_dims(x, axis):
 
 def expm1(x):
     x = _cast_ints_to_floatx(x)
-    # mlx's native GPU `expm1` kernel loses precision away from zero, while
-    # `exp(x) - 1` catastrophically cancels near zero. Use whichever is
-    # accurate for the input's magnitude.
-    return mx.where(mx.abs(x) < 0.1, mx.expm1(x), mx.exp(x) - 1)
+    # Metal's expm1 is inexact away from zero and exp(x) - 1 cancels near it.
+    # Masking the unused expm1 input keeps its overflow out of the gradient.
+    small = mx.abs(x) < 0.1
+    return mx.where(small, mx.expm1(mx.where(small, x, 0)), mx.exp(x) - 1)
 
 
 def flip(x, axis=None):
@@ -1084,7 +1087,9 @@ def _quantile_flatten_axis(x, axis):
     other_dims = sorted(set(range(x.ndim)).difference(axis))
     perm = other_dims + list(axis)
     other_shape = [x.shape[i] for i in other_dims]
-    return mx.transpose(x, perm).reshape(other_shape + [-1]), axis
+    # mlx cannot infer a -1 dimension of an empty array.
+    size = math.prod(x.shape[i] for i in axis)
+    return mx.transpose(x, perm).reshape(other_shape + [size]), axis
 
 
 def _quantile(
@@ -1093,6 +1098,13 @@ def _quantile(
     # Ported from the tf backend. Nans sort last, so per slice valid counts
     # index the right values. Index math is float32 since Metal has no
     # float64, so it is exact below 2**24.
+    if _reduces_empty_axis(x.shape, axis):
+        # jax raises too. mlx gathers out of bounds from an empty axis, which
+        # returns garbage on linux and segfaults on the macOS CPU stream.
+        raise ValueError(
+            "Cannot compute a quantile over an empty axis. "
+            f"Received: x.shape={tuple(x.shape)}, axis={axis}"
+        )
     if axis is not None and not isinstance(axis, (tuple, list)):
         axis = [axis]
     q_full = convert_to_tensor(q, dtype="float32")
@@ -1354,6 +1366,10 @@ def tensordot(x1, x2, axes=2):
 
 def round(x, decimals=0):
     x = convert_to_tensor(x)
+    if decimals and x.dtype == mx.float16:
+        # Scale in float32 like jax, the scaled value can overflow float16.
+        rounded = mx.round(x.astype(mx.float32), decimals=decimals)
+        return rounded.astype(x.dtype)
     return mx.round(x, decimals=decimals)
 
 
@@ -2017,8 +2033,8 @@ def corrcoef(x):
     stddev = mx.sqrt(mx.diagonal(covariance))
     correlation = covariance / mx.expand_dims(stddev, -1) / stddev
     correlation = mx.clip(correlation, -1, 1)
-    if x.ndim == 1:
-        # A single variable gives a scalar 1, or nan for a zero variance.
+    if correlation.shape[0] == 1:
+        # A single variable gives a scalar like jax, nan if it is constant.
         correlation = mx.reshape(correlation, ())
     return correlation.astype(_mlx_result_dtype(dtype))
 
@@ -2468,12 +2484,6 @@ def nanmean(x, axis=None, keepdims=False):
 
 
 def nanmedian(x, axis=None, keepdims=False):
-    x = convert_to_tensor(x)
-    empty_shape = _empty_result_shape(x, axis, keepdims)
-    if empty_shape is not None:
-        # mlx cannot reshape an empty array, so build the empty result.
-        dtype = to_mlx_dtype(dtypes.promote_to_float_dtype(x.dtype))
-        return mx.zeros(empty_shape, dtype)
     return nanquantile(x, 0.5, axis=axis, keepdims=keepdims)
 
 
