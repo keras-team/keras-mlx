@@ -29,10 +29,10 @@ jobs:
     # ubuntu-latest is 4 vCPU and 16G, and the suite does not fit in it. It
     # grows to about 5.5G in a single process and dies roughly one run in
     # four. That is not backend specific, ops/numpy_test.py retains about
-    # 3.7G under numpy too. keras runs the same suite on linux-x86-n2-16, so
+    # 3.7G under numpy too. keras runs the same suite on linux-x86-n4-16, so
     # run it there. Those runners need a container, so follow the keras setup.
     name: Run tests on linux
-    runs-on: linux-x86-n2-16
+    runs-on: linux-x86-n4-16
     container:
       image: python:3.11-slim
     timeout-minutes: 120
@@ -94,10 +94,11 @@ jobs:
         working-directory: ./keras
         # Splitting across workers keeps each process small and means a worker
         # that dies no longer takes the whole run with it. loadfile groups the
-        # tests by file, which is how keras itself runs them.
+        # tests by file, which is how keras itself runs them. auto and 12
+        # workers OOM the pod on this runner, so use 8.
         run: |
           set -o pipefail
-          pytest keras -n auto --dist loadfile --ignore keras/src/applications --ignore keras/src/wrappers | tee "$RUNNER_TEMP/pytest.log"
+          pytest keras -n 8 --dist loadfile --ignore keras/src/applications --ignore keras/src/wrappers | tee "$RUNNER_TEMP/pytest.log"
 
       - name: Run the sklearn wrapper tests
         working-directory: ./keras
