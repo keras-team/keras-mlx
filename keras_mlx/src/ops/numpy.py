@@ -1585,7 +1585,7 @@ def floor_divide(x1, x2):
 
 def logical_xor(x1, x2):
     x1, x2 = convert_to_tensor(x1), convert_to_tensor(x2)
-    return x1.astype(mx.bool_) - x2.astype(mx.bool_)
+    return mx.logical_xor(x1, x2)
 
 
 def maybe_convert_to_tensor(x):
