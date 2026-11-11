@@ -264,7 +264,11 @@ def compute_output_spec(fn, *args, **kwargs):
     return output_spec
 
 
-def _run_all_branches(branches, select):
+def _run_all_branches(
+    branches,
+    select,
+    mismatch="All branches should return outputs of the same kind",
+):
     # MLX has no primitive for data-dependent control flow, so every branch
     # is evaluated and `select` picks between their outputs.
     scope = get_stateless_scope()
@@ -300,8 +304,7 @@ def _run_all_branches(branches, select):
         dtypes = {dtype for _, dtype in specs if dtype is not None}
         if len(shapes) > 1 or len(dtypes) > 1:
             raise ValueError(
-                "All branches should return outputs of the same kind "
-                f"(struct, dtype and shape). Got {specs} instead."
+                f"{mismatch} (struct, dtype and shape). Got {specs} instead."
             )
         return select(*values)
 
@@ -492,6 +495,63 @@ def switch(index, branches, *operands):
     )
 
 
+class UnboundedLoopError(ValueError):
+    """A traced `while_loop` has no bound to unroll. The trainer catches it."""
+
+
+@mx.custom_function
+def _stop_gradient_unless(pred, x):
+    return x
+
+
+@_stop_gradient_unless.vjp
+def _stop_gradient_unless_vjp(primals, cotangent, output):
+    # A stopped iteration can leave the domain of `body`, and the vjp of
+    # `mx.where` lets that nan through.
+    pred, _ = primals
+    return mx.zeros_like(pred), mx.where(
+        pred, cotangent, mx.zeros_like(cotangent)
+    )
+
+
+def _run_masked_iterations(cond, body, loop_vars, pred, iterations):
+    # MLX has no loop primitive, so every iteration runs and the loop
+    # variables stop changing once `pred` turns false.
+    def step():
+        # Guard what `body` reads, the loop and the scope variables.
+        inputs = tree.map_structure(
+            lambda v: _stop_gradient_unless(pred, v), loop_vars
+        )
+        scope = get_stateless_scope()
+        state = {} if scope is None else dict(scope.state_mapping)
+        guarded = {
+            key: _stop_gradient_unless(pred, value)
+            for key, value in state.items()
+            if isinstance(value, mx.array)
+            and mx.issubdtype(value.dtype, mx.inexact)
+        }
+        if guarded:
+            scope.state_mapping.update(guarded)
+        outputs = body(*inputs)
+        for key, value in guarded.items():
+            # Keep what `body` assigned.
+            if scope.state_mapping[key] is value:
+                scope.state_mapping[key] = state[key]
+        if not isinstance(outputs, (list, tuple)):
+            outputs = (outputs,)
+        return tree.pack_sequence_as(loop_vars, tree.flatten(outputs))
+
+    for i in range(iterations):
+        loop_vars = _run_all_branches(
+            (step, lambda: loop_vars),
+            lambda new, old: mx.where(pred, new, old),
+            "`body` should return values of the same kind as `loop_vars`",
+        )
+        if i + 1 < iterations:
+            pred = mx.logical_and(pred, mx.reshape(cond(*loop_vars), ()))
+    return loop_vars
+
+
 def while_loop(
     cond,
     body,
@@ -509,7 +569,31 @@ def while_loop(
     is_tuple = isinstance(loop_vars, (tuple, list))
     loop_vars = tuple(loop_vars) if is_tuple else (loop_vars,)
     loop_vars = tree.map_structure(convert_to_tensor, loop_vars)
-    while iteration_check(current_iter) and cond(*loop_vars):
+    while iteration_check(current_iter):
+        pred = cond(*loop_vars)
+        try:
+            pred_value = bool(pred)
+        except ValueError as e:
+            # bool() of one element only fails under `mx.compile` or
+            # `mx.vmap`.
+            if not isinstance(pred, mx.array) or pred.size != 1:
+                raise
+            if maximum_iterations is None:
+                raise UnboundedLoopError(
+                    "A `while_loop` with a condition that depends on the "
+                    "data needs `maximum_iterations` when it is traced by "
+                    "`mx.compile` or `mx.vmap`."
+                ) from e
+            loop_vars = _run_masked_iterations(
+                cond,
+                body,
+                loop_vars,
+                mx.reshape(pred, ()),
+                maximum_iterations - current_iter,
+            )
+            break
+        if not pred_value:
+            break
         loop_vars = body(*loop_vars)
         if not isinstance(loop_vars, (list, tuple)):
             loop_vars = (loop_vars,)
