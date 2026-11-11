@@ -29,6 +29,10 @@ def _with_tracing_flag(step):
     return traced_step
 
 
+def _data_to_mlx(data):
+    return tree.map_structure(convert_to_tensor, data, none_is_leaf=False)
+
+
 class _State:
     """Step outputs kept for callbacks. Not a dict, the tracker walks those."""
 
@@ -59,9 +63,6 @@ class Trainer(BaseTrainer):
         self.test_function = None
         self.predict_function = None
         self._state_synced = True
-
-    def _data_to_mlx(self, data):
-        return tree.map_structure(convert_to_tensor, data, none_is_leaf=False)
 
     def state_sync(self):
         if not getattr(self, "_mlx_state", None) or self._state_synced:
@@ -856,7 +857,7 @@ class Trainer(BaseTrainer):
             packed_data = data_adapter_utils.pack_x_y_sample_weight(
                 x, y=y, sample_weight=sample_weight
             )
-            yield self._data_to_mlx(packed_data)
+            yield _data_to_mlx(packed_data)
 
         # Maybe build model
         self._symbolic_build(data_batch=next(data()))
@@ -907,7 +908,7 @@ class Trainer(BaseTrainer):
             packed_data = data_adapter_utils.pack_x_y_sample_weight(
                 x, y=y, sample_weight=sample_weight
             )
-            yield self._data_to_mlx(packed_data)
+            yield _data_to_mlx(packed_data)
 
         # Maybe build model
         self._symbolic_build(data_batch=next(data()))
@@ -953,7 +954,7 @@ class Trainer(BaseTrainer):
         )
         self._state_synced = False
 
-        x = self._data_to_mlx(x)
+        x = _data_to_mlx(x)
 
         def data():
             yield (x,)
@@ -978,7 +979,7 @@ class MLXEpochIterator(EpochIterator):
             return (
                 begin_step,
                 end_step,
-                tree.map_structure(convert_to_tensor, buffer),
+                _data_to_mlx(buffer),
             )
         raise StopIteration
 

@@ -26,9 +26,6 @@ keras/src/layers/layer_test.py::LoraLessQuantizationTest::test_float8_quantize_a
 # RandomCrop slices with array bounds, and mlx only takes ints there.
 keras/src/layers/preprocessing/image_preprocessing/random_crop_test.py::RandomCropTest::test_dict_input
 keras/src/layers/preprocessing/image_preprocessing/random_crop_test.py::RandomCropTest::test_random_crop
-keras/src/models/functional_test.py::FunctionalTest::test_required_none_raises_in_fit
-keras/src/models/model_test.py::ModelTest::test_functional_optional_inputs_generator_optional_none
-keras/src/models/model_test.py::ModelTest::test_functional_optional_inputs_optional_none
 keras/src/models/model_test.py::ModelTest::test_quantize_float8
 keras/src/ops/core_test.py::CoreOpsCorrectnessTest::test_cast_float8_float8_e4m3fn
 keras/src/ops/core_test.py::CoreOpsCorrectnessTest::test_cast_float8_float8_e5m2
@@ -61,6 +58,7 @@ keras/src/ops/numpy_test.py::NumpyOneInputOpsDynamicShapeTest::test_argmin_negat
 keras/src/ops/numpy_test.py::NumpyTwoInputOpsCorrectnessTest::test_logaddexp_gradients
 keras/src/quantizers/float8_scaling_test.py::Float8ScalingTest::test_quantize_and_dequantize
 keras/src/quantizers/strategy_registry_test.py::ProjectionOnlyModeTest::test_model_quantize_skips_listing_lookup_layer
+# float64 weights, which Metal lacks.
 keras/src/saving/saving_api_test.py::LoadModelTests::test_basic_load_float64
 keras/src/saving/saving_api_test.py::LoadWeightsTests::test_load_weights_h5_float16_float64
 keras/src/saving/saving_api_test.py::LoadWeightsTests::test_load_weights_h5_float32_float64
