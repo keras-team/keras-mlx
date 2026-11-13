@@ -19,6 +19,7 @@ from keras.src.trainers.trainer import BaseTrainer
 from keras.src.utils import traceback_utils
 from keras.src.utils.python_utils import pythonify_logs
 from keras_mlx.src import distribution_lib
+from keras_mlx.src.ops.core import UnboundedLoopError
 from keras_mlx.src.ops.core import convert_to_numpy
 from keras_mlx.src.ops.core import convert_to_tensor
 from keras_mlx.src.random import tracing_compiled_step
@@ -481,15 +482,33 @@ class Trainer(BaseTrainer):
         if captured:
             mx.eval(*captured)
 
+    def _compile_step(self, step):
+        if self.run_eagerly or not self.jit_compile:
+            return step
+        compiled = mx.compile(_with_tracing_flag(step))
+
+        def compiled_step(state, data):
+            if self.jit_compile:
+                try:
+                    return compiled(state, data)
+                except UnboundedLoopError as e:
+                    # Every step function of the model reads this.
+                    self.jit_compile = False
+                    warnings.warn(
+                        f"{e} The model runs without `mx.compile`. Pass "
+                        "`maximum_iterations`, or `jit_compile=False` to "
+                        "`compile()`, to silence this warning."
+                    )
+            return step(state, data)
+
+        return compiled_step
+
     def make_train_function(self, force=False):
         self._eval_captured_arrays()
         if self.train_function is not None and not force:
             return
         self._broadcast_weights()
-        if not self.run_eagerly and self.jit_compile:
-            train_step = mx.compile(_with_tracing_flag(self.train_step))
-        else:
-            train_step = self.train_step
+        train_step = self._compile_step(self.train_step)
 
         step_function = self._make_function(train_step)
         self.train_function = step_function
@@ -499,10 +518,7 @@ class Trainer(BaseTrainer):
         if self.test_function is not None and not force:
             return
         self._broadcast_weights()
-        if not self.run_eagerly and self.jit_compile:
-            test_step = mx.compile(_with_tracing_flag(self.test_step))
-        else:
-            test_step = self.test_step
+        test_step = self._compile_step(self.test_step)
 
         step_function = self._make_function(test_step)
         self.test_function = step_function
@@ -512,10 +528,7 @@ class Trainer(BaseTrainer):
         if self.predict_function is not None and not force:
             return
 
-        if not self.run_eagerly and self.jit_compile:
-            predict_step = mx.compile(_with_tracing_flag(self.predict_step))
-        else:
-            predict_step = self.predict_step
+        predict_step = self._compile_step(self.predict_step)
 
         step_function = self._make_function(
             predict_step, concatenate_outputs=True
