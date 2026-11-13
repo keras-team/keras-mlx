@@ -1033,6 +1033,34 @@ def outer(x1, x2):
     return mx.outer(x1, x2)
 
 
+def _wrap_pad(x, pad_width):
+    # mx.pad has no wrap mode, so join whole and partial copies of each axis.
+    for axis, (before, after) in enumerate(pad_width):
+        if before < 0 or after < 0:
+            raise ValueError(
+                "Padding sizes must be non-negative. "
+                f"Received: pad_width={pad_width}"
+            )
+        if before == 0 and after == 0:
+            continue
+        size = x.shape[axis]
+        if size == 0:
+            raise ValueError(
+                f"Cannot pad the empty axis {axis} with `mode='wrap'`. "
+                f"Received: x.shape={x.shape}"
+            )
+        index = [slice(None)] * axis
+        copies_before, tail = divmod(before, size)
+        copies_after, head = divmod(after, size)
+        pieces = [x] * (copies_before + 1 + copies_after)
+        if tail:
+            pieces.insert(0, x[tuple(index + [slice(size - tail, None)])])
+        if head:
+            pieces.append(x[tuple(index + [slice(None, head)])])
+        x = mx.concatenate(pieces, axis=axis)
+    return x
+
+
 def pad(x, pad_width, mode="constant", constant_values=None):
     x = convert_to_tensor(x)
     # A pad width can arrive as a traced scalar, mx.pad takes plain ints.
@@ -1054,6 +1082,8 @@ def pad(x, pad_width, mode="constant", constant_values=None):
         return mx.pad(x, pad_width, constant_values=constant_values)
     if mode in ("edge", "reflect", "symmetric"):
         return mx.pad(x, pad_width, mode=mode)
+    if mode == "wrap":
+        return _wrap_pad(x, pad_width)
     raise ValueError(f"Unsupported padding mode: {mode}")
 
 
@@ -1585,7 +1615,7 @@ def floor_divide(x1, x2):
 
 def logical_xor(x1, x2):
     x1, x2 = convert_to_tensor(x1), convert_to_tensor(x2)
-    return x1.astype(mx.bool_) - x2.astype(mx.bool_)
+    return mx.logical_xor(x1, x2)
 
 
 def maybe_convert_to_tensor(x):

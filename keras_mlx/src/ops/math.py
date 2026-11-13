@@ -600,28 +600,25 @@ def lgamma(x):
 
 
 def _log_gamma_prefactor(a, x):
-    # log of x ** a * exp(-x) / gamma(a), shared by both incomplete gamma
-    # branches. It is split because the direct form cancels badly in float32.
-    delta = x - a
-    # 1. a * log(x / a) - (x - a), which stays small around x equal to a.
-    scaled = a * mx.log1p(delta / a) - delta
-    # 2. a * log(a) - a - lgamma(a). Past the threshold the Stirling series
-    # gives it outright. Below it the three terms are small enough to
-    # subtract without losing anything.
+    # Log of x ** a * exp(-x) / gamma(a + 1).
+    large = a > _STIRLING_THRESHOLD
+    delta = mx.where(large, x, a) - a
+    ratio = mx.maximum(delta / a, 2.0**-24 - 1.0)
+    scaled = a * mx.log1p(ratio) - delta
     stirling = (
-        0.5 * mx.log(a / (2.0 * python_math.pi))
+        -0.5 * mx.log(2.0 * python_math.pi * a)
         - 1.0 / (12.0 * a)
         + 1.0 / (360.0 * a**3)
     )
-    direct = a * mx.log(a) - a - _lgamma(a)
-    return scaled + mx.where(a > _STIRLING_THRESHOLD, stirling, direct)
+    direct = a * mx.log(x) - x - _lgamma(a + 1.0)
+    return mx.where(large, scaled + stirling, direct)
 
 
 def _lower_gamma_series(a, x):
-    # Series for the lower incomplete gamma, which converges quickly while x
-    # sits below a + 1.
+    # Series for the lower incomplete gamma divided by the prefactor, which
+    # converges quickly while x sits below a + 1.
     ap = a
-    term = 1.0 / a
+    term = 1.0
     total = term
     for _ in range(_GAMMAINC_ITERATIONS):
         ap = ap + 1.0
@@ -671,7 +668,8 @@ def gammainc(x1, x2):
     # 2. At or above it the fraction gives the upper tail, so take the
     # complement.
     fraction_x = mx.where(use_series, a + 1.0, safe_x)
-    fraction = 1.0 - _upper_gamma_fraction(a, fraction_x) * prefactor
+    # The prefactor divides by gamma(a + 1), so multiply the fraction by a.
+    fraction = 1.0 - _upper_gamma_fraction(a, fraction_x) * a * prefactor
     out = mx.where(use_series, series, fraction)
     # The logarithm above is not finite at the edges of the domain. Later
     # patches take precedence, and the invalid inputs come last.
