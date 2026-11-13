@@ -2,11 +2,11 @@ import mlx.core as mx
 import numpy as np
 
 from keras.src import tree
-from keras.src.backend.common import result_type
 from keras.src.backend.common import standardize_dtype
 from keras_mlx.src.ops.core import convert_to_tensor
 from keras_mlx.src.ops.core import lapack_float
 from keras_mlx.src.ops.core import promote_to_float
+from keras_mlx.src.ops.core import result_type
 
 
 def _det_2x2(a):

@@ -7,7 +7,6 @@ import numpy as np
 
 from keras.src.backend import config
 from keras.src.backend.common import dtypes
-from keras.src.backend.common import result_type
 from keras.src.backend.common import standardize_dtype
 from keras.src.backend.common.backend_utils import canonicalize_axis
 from keras.src.backend.common.backend_utils import normalize_shift_and_axis
@@ -18,6 +17,7 @@ from keras_mlx.src.ops.core import convert_to_tensor
 from keras_mlx.src.ops.core import convert_to_tensors
 from keras_mlx.src.ops.core import int_dtype_of_size
 from keras_mlx.src.ops.core import lapack_float
+from keras_mlx.src.ops.core import result_type
 from keras_mlx.src.ops.core import scatter
 from keras_mlx.src.ops.core import to_mlx_dtype
 
@@ -2793,7 +2793,7 @@ def cov(x):
     result_dtype = _mlx_result_dtype(dtype)
     if x.ndim == 0:
         return mx.full((), mx.nan, dtype=result_dtype)
-    x = x.astype(_mlx_result_dtype(dtypes.result_type(x.dtype, "float32")))
+    x = x.astype(_mlx_result_dtype(result_type(x.dtype, "float32")))
     result = _covariance(x)
     if result.shape[0] == 1:
         result = mx.reshape(result, ())

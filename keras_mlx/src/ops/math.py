@@ -3,7 +3,6 @@ import math as python_math
 import mlx.core as mx
 import numpy as np
 
-from keras.src.backend.common import result_type
 from keras.src.backend.common import standardize_dtype
 from keras.src.backend.common.backend_utils import canonicalize_axis
 from keras.src.utils.module_utils import scipy
@@ -11,6 +10,7 @@ from keras_mlx.src.ops.core import cast
 from keras_mlx.src.ops.core import convert_to_tensor
 from keras_mlx.src.ops.core import int_dtype_of_size
 from keras_mlx.src.ops.core import promote_to_float
+from keras_mlx.src.ops.core import result_type
 from keras_mlx.src.ops.core import scatter_update
 from keras_mlx.src.ops.core import to_mlx_dtype
 

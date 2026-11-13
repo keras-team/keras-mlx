@@ -6,10 +6,10 @@ import mlx.core as mx
 import numpy as np
 
 from keras.src.backend.common import is_float_dtype
-from keras.src.backend.common import result_type
 from keras.src.backend.common import standardize_dtype
 from keras.src.backend.config import standardize_data_format
 from keras_mlx.src.ops.core import convert_to_tensor
+from keras_mlx.src.ops.core import result_type
 from keras_mlx.src.ops.core import to_mlx_dtype
 from keras_mlx.src.random import mlx_draw_seed
 
