@@ -177,6 +177,9 @@ jobs:
           pip install -r keras-mlx/requirements.txt
           # tf_keras has to match the tensorflow minor, newer ones need protobuf 6.
           pip install --no-deps "tf_keras==$(python -c 'import tensorflow as tf; print(tf.__version__.rsplit(".", 1)[0])').*"
+          # Both need a newer protobuf than tensorflow 2.19 allows, so importing
+          # them fails. keras and tensorboardX work without them.
+          pip uninstall -y xla-saved-model google-cloud-storage
 
       - name: Install keras-mlx
         working-directory: ./keras-mlx
