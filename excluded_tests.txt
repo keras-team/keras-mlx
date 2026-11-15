@@ -56,6 +56,10 @@ keras/src/ops/numpy_test.py::NumpyOneInputOpsCorrectnessTest::test_floor_divide_
 keras/src/ops/numpy_test.py::NumpyOneInputOpsDynamicShapeTest::test_argmax_negative_zero
 keras/src/ops/numpy_test.py::NumpyOneInputOpsDynamicShapeTest::test_argmin_negative_zero
 keras/src/ops/numpy_test.py::NumpyTwoInputOpsCorrectnessTest::test_logaddexp_gradients
+# float64 model inputs, which Metal lacks. Remove once the keras test
+# uses float32 arrays.
+keras/src/ops/numpy_test.py::SqueezeTest::test_functional_model
+keras/src/ops/numpy_test.py::SqueezeTest::test_serialization
 keras/src/quantizers/float8_scaling_test.py::Float8ScalingTest::test_quantize_and_dequantize
 keras/src/quantizers/strategy_registry_test.py::ProjectionOnlyModeTest::test_model_quantize_skips_listing_lookup_layer
 # float64 weights, which Metal lacks.
