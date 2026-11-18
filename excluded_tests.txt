@@ -80,6 +80,8 @@ keras/src/saving/saving_api_test.py::LoadWeightsTests::test_load_weights_weights
 keras/src/saving/saving_api_test.py::LoadWeightsTests::test_load_weights_weights.h5_float64_float16
 keras/src/saving/saving_api_test.py::LoadWeightsTests::test_load_weights_weights.h5_float64_float32
 keras/src/saving/saving_api_test.py::LoadWeightsTests::test_load_weights_weights.h5_float64_float64
+# keras only allows x64_mode explicit_x64 on jax, numpy and torch.
+keras/src/testing/op_test_case_test.py::CheckInputDtypesTest::test_capped_op_fails_only_in_explicit_x64
 keras/src/trainers/trainer_test.py::TestTrainer::test_evaluate_with_custom_test_step_dict
 keras/src/trainers/trainer_test.py::TestTrainer::test_evaluate_with_custom_test_step_flat
 keras/src/trainers/trainer_test.py::TestTrainer::test_fit_with_custom_train_step
