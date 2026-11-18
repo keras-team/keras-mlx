@@ -3,6 +3,10 @@
 keras/src/backend/common/variables_test.py::VariablePropertiesTest::test_standardize_dtype_complex128
 keras/src/backend/common/variables_test.py::VariablePropertiesTest::test_standardize_dtype_float8_e4m3fn
 keras/src/backend/common/variables_test.py::VariablePropertiesTest::test_standardize_dtype_float8_e5m2
+# 64-bit dtypes are capped to 32 bits. keras skips these for jax only.
+keras/src/backend/common/variables_test.py::VariablePropertiesTest::test_standardize_dtype_float64
+keras/src/backend/common/variables_test.py::VariablePropertiesTest::test_standardize_dtype_int64
+keras/src/backend/common/variables_test.py::VariablePropertiesTest::test_standardize_dtype_uint64
 keras/src/callbacks/tensorboard_test.py::TestTensorBoardV2::test_tensorboard_non_blocking
 keras/src/layers/core/dense_test.py::DenseTest::test_float8_reads_its_dtype_policy_map_entry
 keras/src/layers/core/dense_test.py::DenseTest::test_quantize_dtype_argument_float8
@@ -26,12 +30,17 @@ keras/src/layers/layer_test.py::LoraLessQuantizationTest::test_float8_quantize_a
 # RandomCrop slices with array bounds, and mlx only takes ints there.
 keras/src/layers/preprocessing/image_preprocessing/random_crop_test.py::RandomCropTest::test_dict_input
 keras/src/layers/preprocessing/image_preprocessing/random_crop_test.py::RandomCropTest::test_random_crop
+# int64 labels are capped to int32, so int64 max is not a distinct label.
+# keras leaves these two cases out for jax and numpy only.
+keras/src/losses/losses_test.py::SparseCategoricalFocalCrossentropyTest::test_class_preserves_labels_with_low_precision_dtype_int64_max
+keras/src/losses/losses_test.py::SparseCategoricalFocalCrossentropyTest::test_out_of_range_ignore_class_int64_max
 keras/src/models/model_test.py::ModelTest::test_quantize_float8
 keras/src/ops/core_test.py::CoreOpsCorrectnessTest::test_cast_float8_float8_e4m3fn
 keras/src/ops/core_test.py::CoreOpsCorrectnessTest::test_cast_float8_float8_e5m2
 # mlx 0.32.4 on Metal misorders a reshape after transposing some 3D conv
 # outputs. Remove once an mlx release fixes the reshape contiguity flags.
 keras/src/ops/image_test.py::ImageOpsCorrectnessTest::test_reconstruct_patches_3d
+# keras expects float64 from resize and exempts jax only.
 keras/src/ops/image_test.py::ImageOpsCorrectnessTest::test_resize_dtype_bicubic_false_float64
 keras/src/ops/image_test.py::ImageOpsCorrectnessTest::test_resize_dtype_bicubic_true_float64
 keras/src/ops/image_test.py::ImageOpsCorrectnessTest::test_resize_dtype_bilinear_false_float64
@@ -42,44 +51,16 @@ keras/src/ops/image_test.py::ImageOpsCorrectnessTest::test_resize_dtype_lanczos5
 keras/src/ops/image_test.py::ImageOpsCorrectnessTest::test_resize_dtype_lanczos5_true_float64
 keras/src/ops/image_test.py::ImageOpsCorrectnessTest::test_resize_dtype_nearest_false_float64
 keras/src/ops/image_test.py::ImageOpsCorrectnessTest::test_resize_dtype_nearest_true_float64
-keras/src/ops/image_test.py::ImageOpsCorrectnessTest::test_resize_with_pad_1.0
-keras/src/ops/image_test.py::ImageOpsCorrectnessTest::test_resize_with_pad_2.0
 keras/src/ops/math_test.py::MathOpsCorrectnessTest::test_istft0
 keras/src/ops/math_test.py::MathOpsCorrectnessTest::test_istft3
 keras/src/ops/math_test.py::MathOpsCorrectnessTest::test_istft4
 keras/src/ops/math_test.py::MathOpsCorrectnessTest::test_istft5
 keras/src/ops/math_test.py::MathOpsCorrectnessTest::test_istft6
 keras/src/ops/numpy_test.py::NumpyOneInputOpsCorrectnessTest::test_argpartition_backend_specific
-# The generic _cov casts int64 inputs to float64, which Metal lacks.
-keras/src/ops/numpy_test.py::NumpyOneInputOpsCorrectnessTest::test_corrcoef_backend_agnostic
-keras/src/ops/numpy_test.py::NumpyOneInputOpsCorrectnessTest::test_floor_divide_float_quotient_rounding_float64
 keras/src/ops/numpy_test.py::NumpyOneInputOpsDynamicShapeTest::test_argmax_negative_zero
 keras/src/ops/numpy_test.py::NumpyOneInputOpsDynamicShapeTest::test_argmin_negative_zero
-keras/src/ops/numpy_test.py::NumpyTwoInputOpsCorrectnessTest::test_logaddexp_gradients
 keras/src/quantizers/float8_scaling_test.py::Float8ScalingTest::test_quantize_and_dequantize
 keras/src/quantizers/strategy_registry_test.py::ProjectionOnlyModeTest::test_model_quantize_skips_listing_lookup_layer
-# float64 weights, which Metal lacks.
-keras/src/saving/saving_api_test.py::LoadModelTests::test_basic_load_float64
-keras/src/saving/saving_api_test.py::LoadWeightsTests::test_load_weights_h5_float16_float64
-keras/src/saving/saving_api_test.py::LoadWeightsTests::test_load_weights_h5_float32_float64
-keras/src/saving/saving_api_test.py::LoadWeightsTests::test_load_weights_h5_float64_bfloat16
-keras/src/saving/saving_api_test.py::LoadWeightsTests::test_load_weights_h5_float64_float16
-keras/src/saving/saving_api_test.py::LoadWeightsTests::test_load_weights_h5_float64_float32
-keras/src/saving/saving_api_test.py::LoadWeightsTests::test_load_weights_h5_float64_float64
-keras/src/saving/saving_api_test.py::LoadWeightsTests::test_load_weights_keras_bfloat16_float64
-keras/src/saving/saving_api_test.py::LoadWeightsTests::test_load_weights_keras_float16_float64
-keras/src/saving/saving_api_test.py::LoadWeightsTests::test_load_weights_keras_float32_float64
-keras/src/saving/saving_api_test.py::LoadWeightsTests::test_load_weights_keras_float64_bfloat16
-keras/src/saving/saving_api_test.py::LoadWeightsTests::test_load_weights_keras_float64_float16
-keras/src/saving/saving_api_test.py::LoadWeightsTests::test_load_weights_keras_float64_float32
-keras/src/saving/saving_api_test.py::LoadWeightsTests::test_load_weights_keras_float64_float64
-keras/src/saving/saving_api_test.py::LoadWeightsTests::test_load_weights_weights.h5_bfloat16_float64
-keras/src/saving/saving_api_test.py::LoadWeightsTests::test_load_weights_weights.h5_float16_float64
-keras/src/saving/saving_api_test.py::LoadWeightsTests::test_load_weights_weights.h5_float32_float64
-keras/src/saving/saving_api_test.py::LoadWeightsTests::test_load_weights_weights.h5_float64_bfloat16
-keras/src/saving/saving_api_test.py::LoadWeightsTests::test_load_weights_weights.h5_float64_float16
-keras/src/saving/saving_api_test.py::LoadWeightsTests::test_load_weights_weights.h5_float64_float32
-keras/src/saving/saving_api_test.py::LoadWeightsTests::test_load_weights_weights.h5_float64_float64
 # keras only allows x64_mode explicit_x64 on jax, numpy and torch.
 keras/src/testing/op_test_case_test.py::CheckInputDtypesTest::test_capped_op_fails_only_in_explicit_x64
 keras/src/trainers/trainer_test.py::TestTrainer::test_evaluate_with_custom_test_step_dict

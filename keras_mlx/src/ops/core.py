@@ -26,27 +26,52 @@ except ImportError:
 MLX_DTYPES = {
     "float16": mx.float16,
     "float32": mx.float32,
-    "float64": mx.float64,  # for mlx float64 only supported on cpu
     "uint8": mx.uint8,
     "uint16": mx.uint16,
     "uint32": mx.uint32,
-    "uint64": mx.uint64,
     "int8": mx.int8,
     "int16": mx.int16,
     "int32": mx.int32,
-    "int64": mx.int64,
     "bfloat16": mx.bfloat16,
     "bool": mx.bool_,
     "complex64": mx.complex64,
-    # mlx has no complex128, downcast like float64 to keep complex requests
-    # from raising.
-    "complex128": mx.complex64,
+}
+# keras only allows x64_mode "off" on mlx, so 64-bit dtypes are capped to
+# 32 bits like on jax.
+MLX_DTYPES.update(
+    {
+        dtype: MLX_DTYPES[capped]
+        for dtype, capped in dtypes.BIT64_TO_BIT32_DTYPE.items()
+    }
+)
+# The same cap for arrays that are already 64-bit. mlx has no complex128.
+_CAPPED_MLX_DTYPES = {
+    getattr(mx, dtype): MLX_DTYPES[dtype]
+    for dtype in dtypes.BIT64_TO_BIT32_DTYPE
+    if hasattr(mx, dtype)
+}
+_CAPPED_NUMPY_DTYPES = {
+    np.dtype(dtype): capped
+    for dtype, capped in dtypes.BIT64_TO_BIT32_DTYPE.items()
+}
+# The numpy dtype to cast a 64-bit numpy array to when a dtype is given.
+# mlx casts float32 to bfloat16 itself.
+_NUMPY_CAST_DTYPES = {
+    mlx_dtype: "float32" if dtype == "bfloat16" else dtype
+    for dtype, mlx_dtype in MLX_DTYPES.items()
+    if dtype not in dtypes.BIT64_TO_BIT32_DTYPE
+}
+# Name and limits of the integer dtypes.
+_INT_LIMITS = {
+    dtype: (name, mx.iinfo(dtype).min, mx.iinfo(dtype).max)
+    for name, dtype in MLX_DTYPES.items()
+    if "int" in name and name not in dtypes.BIT64_TO_BIT32_DTYPE
 }
 
 
 def to_mlx_dtype(dtype):
     if isinstance(dtype, mx.Dtype):
-        return dtype
+        return _CAPPED_MLX_DTYPES.get(dtype, dtype)
     standardized_dtype = MLX_DTYPES.get(standardize_dtype(dtype), None)
     if standardized_dtype is None:
         raise ValueError(f"Unsupported dtype for MLX: {dtype}")
@@ -61,13 +86,85 @@ def _is_h5py_dataset(obj):
 
 
 def _astype(x, dtype):
-    # mlx sends the gradient through a float to int cast, jax and torch stop
-    # it. Remove once mlx stops it too.
-    if mx.issubdtype(x.dtype, mx.inexact) and not mx.issubdtype(
+    if not mx.issubdtype(x.dtype, mx.inexact) or mx.issubdtype(
         dtype, mx.inexact
     ):
-        return mx.stop_gradient(x.astype(dtype))
-    return x.astype(dtype)
+        return x.astype(dtype)
+    # mlx sends the gradient through a float to int cast, jax and torch stop
+    # it. Remove once mlx stops it too.
+    x = mx.stop_gradient(x)
+    if dtype not in _INT_LIMITS:
+        return x.astype(dtype)
+    # The CPU cast wraps floats that are out of range or nan. Saturate and
+    # send nan to 0 like Metal and jax. Remove once the mlx CPU cast saturates.
+    if mx.issubdtype(x.dtype, mx.complexfloating):
+        x = mx.real(x)
+    _, low, high = _INT_LIMITS[dtype]
+    result = mx.clip(x, low, high).astype(dtype)
+    result = mx.where(x >= high, high, result)
+    return mx.where(mx.isnan(x), 0, result)
+
+
+def _int_fits(x, mlx_dtype):
+    limits = _INT_LIMITS.get(mlx_dtype)
+    return limits is not None and limits[1] <= x <= limits[2]
+
+
+def _check_python_int(x, mlx_dtype):
+    if not _int_fits(x, mlx_dtype):
+        name = _INT_LIMITS[mlx_dtype][0]
+        raise OverflowError(f"Python integer {x} out of bounds for {name}")
+
+
+def _wrap_python_int(x, mlx_dtype):
+    # Wraps like a cast from a wider integer dtype.
+    if mlx_dtype not in _INT_LIMITS or not isinstance(x, int):
+        return x
+    _, low, high = _INT_LIMITS[mlx_dtype]
+    return (x - low) % (high - low + 1) + low
+
+
+def _python_int_to_tensor(x, mlx_dtype):
+    # mlx wraps a Python int that does not fit, jax raises.
+    mlx_dtype = mlx_dtype or mx.int32
+    if mlx_dtype in _INT_LIMITS:
+        _check_python_int(x, mlx_dtype)
+        return mx.array(x, dtype=mlx_dtype)
+    # mlx cannot read an int past int64, so pass a float.
+    return mx.array(float(x), dtype=mlx_dtype)
+
+
+def _check_list_ints(values, mlx_dtype):
+    # Check the Python values. An eval here would hang in a forked process.
+    ints = [v for v in values if isinstance(v, int) and not isinstance(v, bool)]
+    if ints and mlx_dtype in _INT_LIMITS:
+        _check_python_int(min(ints), mlx_dtype)
+        _check_python_int(max(ints), mlx_dtype)
+
+
+def _list_to_tensor(x, mlx_dtype):
+    try:
+        result = mx.array(x)
+    except (ValueError, RuntimeError):
+        values = tree.flatten(x)
+        arrays = (np.generic, np.ndarray, mx.array)
+        if not any(isinstance(v, arrays) for v in values):
+            # mlx raises std::bad_cast for an int past int64.
+            _check_list_ints(values, mlx_dtype or mx.int32)
+            raise
+        # mlx rejects lists that hold numpy values, and float64 arrays on
+        # Metal.
+        x = np.asarray(x)
+        if mlx_dtype is not None or x.dtype.kind in "iuO":
+            _check_list_ints(values, mlx_dtype or mx.int32)
+        return convert_to_tensor(x, dtype=mlx_dtype)
+    target = mlx_dtype or _CAPPED_MLX_DTYPES.get(result.dtype, result.dtype)
+    if result.dtype == target:
+        return result
+    if mx.issubdtype(result.dtype, mx.integer):
+        # mlx infers int64 for Python ints past int32.
+        _check_list_ints(tree.flatten(x), target)
+    return convert_to_tensor(result, dtype=target)
 
 
 def convert_to_tensor(x, dtype=None, sparse=None, ragged=None):
@@ -78,8 +175,16 @@ def convert_to_tensor(x, dtype=None, sparse=None, ragged=None):
     mlx_dtype = to_mlx_dtype(dtype) if dtype is not None else None
 
     if is_tensor(x):
-        if dtype is None or x.dtype == mlx_dtype:
+        if mlx_dtype is None:
+            mlx_dtype = _CAPPED_MLX_DTYPES.get(x.dtype)
+            if mlx_dtype is None:
+                return x
+        elif x.dtype == mlx_dtype:
             return x
+        if x.dtype == mx.float64:
+            # Metal cannot read float64, so cast it on the CPU stream.
+            with mx.stream(mx.cpu):
+                return _astype(x, mlx_dtype)
         return _astype(x, mlx_dtype)
 
     if isinstance(x, Variable):
@@ -88,9 +193,11 @@ def convert_to_tensor(x, dtype=None, sparse=None, ragged=None):
         return x.value
 
     if isinstance(x, np.ndarray):
-        if x.dtype == np.float64:
-            # mlx backend does not support float64
-            x = x.astype(np.float32)
+        capped = _CAPPED_NUMPY_DTYPES.get(x.dtype)
+        if capped is not None:
+            # Metal cannot load float64, and a cast to float32 first would
+            # round values the dtype can hold. Cast in numpy.
+            x = x.astype(_NUMPY_CAST_DTYPES.get(mlx_dtype, capped))
         # mlx 0.32 raises on negative stride numpy views like img[..., ::-1].
         # Remove once mlx copies them instead.
         if any(stride < 0 for stride in x.strides):
@@ -103,8 +210,8 @@ def convert_to_tensor(x, dtype=None, sparse=None, ragged=None):
             to_mlx_dtype(x.dtype)
             raise
 
-    if isinstance(x, list):
-        return mx.array(x, dtype=mlx_dtype)
+    if isinstance(x, (list, tuple)):
+        return _list_to_tensor(x, mlx_dtype)
 
     if _is_h5py_dataset(x):
         if h5py is None:
@@ -125,7 +232,21 @@ def convert_to_tensor(x, dtype=None, sparse=None, ragged=None):
         # through numpy so the float64 and bfloat16 handling above applies.
         return convert_to_tensor(np.asarray(x), dtype=dtype)
 
+    if isinstance(x, int) and not isinstance(x, bool):
+        return _python_int_to_tensor(x, mlx_dtype)
     return mx.array(x, dtype=mlx_dtype)
+
+
+def convert_operand(x, dtype):
+    # Like jax, a Python int that fits int32 but not the int dtype wraps into
+    # it. One past int32 raises.
+    if dtype is None or not isinstance(x, int) or isinstance(x, bool):
+        return convert_to_tensor(x, dtype)
+    mlx_dtype = to_mlx_dtype(dtype)
+    if mlx_dtype in _INT_LIMITS and not _int_fits(x, mlx_dtype):
+        _check_python_int(x, mx.int32)
+        x = _wrap_python_int(x, mlx_dtype)
+    return _python_int_to_tensor(x, mlx_dtype)
 
 
 def convert_to_tensors(*xs):
@@ -139,20 +260,20 @@ def convert_to_tensors(*xs):
     if dtype in (mx.float32, mx.float16, mx.bfloat16):
         for i, x in enumerate(xs):
             if ys[i] is None:
-                ys[i] = mx.array(x, dtype=dtype)
+                ys[i] = convert_operand(x, dtype)
     # Bool loses against everything so scalars keep their type
     elif dtype == mx.bool_:
         for i, x in enumerate(xs):
             if ys[i] is None:
-                ys[i] = mx.array(x)
+                ys[i] = convert_to_tensor(x)
     # Integral types keep their type except if the scalar is a float
     else:
         for i, x in enumerate(xs):
             if ys[i] is None:
                 if isinstance(x, float):
-                    ys[i] = mx.array(x)
+                    ys[i] = convert_to_tensor(x)
                 else:
-                    ys[i] = mx.array(x, dtype=dtype)
+                    ys[i] = convert_operand(x, dtype)
 
     return ys
 
@@ -199,7 +320,7 @@ def lapack_float(x):
 
 
 def int_dtype_of_size(dtype):
-    return {2: mx.int16, 4: mx.int32, 8: mx.int64}[dtype.size]
+    return {2: mx.int16, 4: mx.int32}[dtype.size]
 
 
 # Shape / dtype inference util
@@ -218,10 +339,7 @@ def compute_output_spec(fn, *args, **kwargs):
                 for i, e in enumerate(shape):
                     if e is None:
                         shape[i] = fill_value
-            # mlx has no GPU float64, and eager convert_to_tensor downcasts it
-            # to float32, so mirror that here for shape/dtype inference.
-            dtype = "float32" if x.dtype == "float64" else x.dtype
-            return mx.ones(shape, dtype=MLX_DTYPES[dtype])
+            return mx.ones(shape, dtype=MLX_DTYPES[x.dtype])
         return x
 
     def convert_mlx_to_keras_tensor(x):
@@ -335,9 +453,9 @@ def vectorized_map(function, elements):
     return mx.vmap(function)(elements)
 
 
-# GPU scatter does not yet support int64, uint64, or complex64 for the
-# input or updates, so those dtypes are scattered on the CPU stream.
-_SCATTER_UNSUPPORTED_GPU_DTYPES = (mx.int64, mx.uint64, mx.complex64)
+# GPU scatter does not yet support complex64 for the input or updates, so
+# it is scattered on the CPU stream.
+_SCATTER_UNSUPPORTED_GPU_DTYPES = (mx.complex64,)
 
 
 def scatter(indices, values, shape):
@@ -617,9 +735,7 @@ def fori_loop(lower, upper, body_fun, init_val):
 
 
 def stop_gradient(variable):
-    if isinstance(variable, Variable):
-        variable = variable.value
-    return mx.stop_gradient(variable)
+    return mx.stop_gradient(convert_to_tensor(variable))
 
 
 @mx.custom_function
@@ -648,6 +764,7 @@ def random_seed_dtype():
 
 
 def reverse_sequence(xs, axis=0):
+    xs = convert_to_tensor(xs)
     indices = mx.arange(xs.shape[axis] - 1, -1, -1)
     return mx.take(xs, indices, axis=axis)
 
