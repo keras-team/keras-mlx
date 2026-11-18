@@ -1,3 +1,5 @@
+import numpy as np
+
 from keras.src.backend.common import KerasVariable
 from keras_mlx.src.ops.core import convert_to_numpy
 from keras_mlx.src.ops.core import convert_to_tensor
@@ -24,8 +26,11 @@ class Variable(KerasVariable):
             "Use `ops.convert_to_numpy(variable)` to read its value."
         )
 
-    def __array__(self, dtype=None):
+    def __array__(self, dtype=None, *, copy=None):
+        # The base class reads the mlx array as numpy, which raises for
+        # bfloat16. convert_to_numpy handles it and returns a new array.
         value = convert_to_numpy(self.value)
-        if dtype:
-            return value.astype(dtype)
-        return value
+        if copy:
+            # value is already a copy, so only a dtype change copies again.
+            copy = None
+        return np.array(value, dtype=dtype, copy=copy)
