@@ -108,6 +108,10 @@ class PythonIntTest(testing.TestCase):
         self.assertAllEqual(ops.multiply(x, 300), [44, 88])
         self.assertAllEqual(ops.full((2,), 2**40, dtype="int32"), [0, 0])
 
+    def test_list_past_int64_to_float(self):
+        x = ops.convert_to_tensor([2**70, 1], dtype="float32")
+        self.assertAllClose(x, [2.0**70, 1.0])
+
     def test_compares_by_value(self):
         x = ops.convert_to_tensor([1, 2], dtype="int8")
         self.assertAllEqual(ops.equal(x, 300), [False, False])

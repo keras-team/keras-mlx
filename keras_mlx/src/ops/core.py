@@ -150,8 +150,16 @@ def _list_to_tensor(x, mlx_dtype):
         arrays = (np.generic, np.ndarray, mx.array)
         if not any(isinstance(v, arrays) for v in values):
             # mlx raises std::bad_cast for an int past int64.
-            _check_list_ints(values, mlx_dtype or mx.int32)
-            raise
+            target = mlx_dtype or mx.int32
+            if target in _INT_LIMITS:
+                _check_list_ints(values, target)
+                raise
+            if not any(type(v) is int for v in values):
+                raise
+            floats = tree.map_structure(
+                lambda v: float(v) if type(v) is int else v, x
+            )
+            return _list_to_tensor(floats, mlx_dtype)
         # mlx rejects lists that hold numpy values, and float64 arrays on
         # Metal.
         x = np.asarray(x)
