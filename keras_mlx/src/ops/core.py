@@ -312,10 +312,14 @@ def cast(x, dtype):
 def promote_to_float(x, *others):
     # With several operands they promote together, as jax does for mixed
     # inputs, and a tuple comes back.
+    x = convert_to_tensor(x)
     if others:
+        others = [convert_to_tensor(o) for o in others]
         dtype = result_type(x.dtype, *[o.dtype for o in others])
         float_dtype = dtypes.promote_to_float_dtype(dtype)
         return tuple(cast(t, float_dtype) for t in (x, *others))
+    if mx.issubdtype(x.dtype, mx.inexact):
+        return x
     return cast(x, dtypes.promote_to_float_dtype(x.dtype))
 
 

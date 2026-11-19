@@ -80,8 +80,7 @@ def segment_prod(data, segment_ids, num_segments=None, sorted=False):
 
 
 def cdist(x, y):
-    x = convert_to_tensor(x)
-    y = convert_to_tensor(y)
+    x, y = promote_to_float(x, y)
     if x.ndim < 2 or y.ndim < 2:
         raise ValueError("`cdist` inputs must have rank >= 2")
     if x.shape[-1] != y.shape[-1]:

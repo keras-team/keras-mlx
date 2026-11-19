@@ -2,7 +2,6 @@ import mlx.core as mx
 import numpy as np
 
 from keras.src import tree
-from keras.src.backend.common import result_type
 from keras.src.backend.common import standardize_dtype
 from keras_mlx.src.ops.core import convert_to_tensor
 from keras_mlx.src.ops.core import lapack_float
@@ -172,10 +171,7 @@ def cholesky(a, upper=False):
 
 
 def norm(x, ord=None, axis=None, keepdims=False):
-    dtype = standardize_dtype(x.dtype)
-    if "int" in dtype or dtype == "bool":
-        dtype = result_type(x.dtype, "float32")
-    x = convert_to_tensor(x, dtype=dtype)
+    x = promote_to_float(x)
     x, result_dtype = lapack_float(x)
     # Singular value matrix norms are svd-based, which is CPU-only in mlx.
     if isinstance(axis, (tuple, list)):

@@ -23,6 +23,7 @@ from keras_mlx.src.ops.core import convert_to_tensors
 from keras_mlx.src.ops.core import int_dtype_of_size
 from keras_mlx.src.ops.core import is_tensor
 from keras_mlx.src.ops.core import lapack_float
+from keras_mlx.src.ops.core import promote_to_float
 from keras_mlx.src.ops.core import scatter
 from keras_mlx.src.ops.core import to_mlx_dtype
 
@@ -48,6 +49,13 @@ def _promote(*xs):
     xs = _convert_non_scalars(*xs)
     dtype = _result_dtype(*xs)
     return [convert_operand(x, dtype) for x in xs]
+
+
+def _promote_to_float(x1, x2):
+    # Like _promote, with an int or bool result type going to floatx.
+    x1, x2 = _convert_non_scalars(x1, x2)
+    dtype = dtypes.promote_to_float_dtype(_result_dtype(x1, x2))
+    return convert_to_tensor(x1, dtype), convert_to_tensor(x2, dtype)
 
 
 def add(x1, x2):
@@ -105,17 +113,10 @@ def multiply(x1, x2):
 
 def mean(x, axis=None, keepdims=False):
     x = convert_to_tensor(x)
-    ori_dtype = standardize_dtype(x.dtype)
     # `mx.mean` does not handle low precision (e.g., float16) overflow
-    # correctly, so we compute with float32 and cast back to the original type.
-    compute_dtype = result_type(x.dtype, "float32")
-    if "int" in ori_dtype or ori_dtype == "bool":
-        result_dtype = compute_dtype
-    else:
-        result_dtype = ori_dtype
-
-    compute_dtype = to_mlx_dtype(compute_dtype)
-    result_dtype = to_mlx_dtype(result_dtype)
+    # correctly, so we compute with float32 and cast back.
+    compute_dtype = to_mlx_dtype(result_type(x.dtype, "float32"))
+    result_dtype = to_mlx_dtype(dtypes.promote_to_float_dtype(x.dtype))
     x = x.astype(compute_dtype)
     output = mx.mean(x, axis=axis, keepdims=keepdims)
     return cast(output, result_dtype)
@@ -255,38 +256,37 @@ def arange(start, stop=None, step=None, dtype=None):
 
 
 def arccos(x):
-    x = convert_to_tensor(x)
+    x = promote_to_float(x)
     return mx.arccos(x)
 
 
 def arccosh(x):
-    x = convert_to_tensor(x)
+    x = promote_to_float(x)
     return mx.arccosh(x)
 
 
 def arcsin(x):
-    x = convert_to_tensor(x)
+    x = promote_to_float(x)
     return mx.arcsin(x)
 
 
 def arcsinh(x):
-    x = convert_to_tensor(x)
+    x = promote_to_float(x)
     return mx.arcsinh(x)
 
 
 def arctan(x):
-    x = convert_to_tensor(x)
+    x = promote_to_float(x)
     return mx.arctan(x)
 
 
 def arctan2(x1, x2):
-    x1 = convert_to_tensor(x1)
-    x2 = convert_to_tensor(x2)
+    x1, x2 = _promote_to_float(x1, x2)
     return mx.arctan2(x1, x2)
 
 
 def arctanh(x):
-    x = convert_to_tensor(x)
+    x = promote_to_float(x)
     return mx.arctanh(x)
 
 
@@ -530,12 +530,12 @@ def copysign(x1, x2):
 
 
 def cos(x):
-    x = convert_to_tensor(x)
+    x = promote_to_float(x)
     return mx.cos(x)
 
 
 def cosh(x):
-    x = convert_to_tensor(x)
+    x = promote_to_float(x)
     return mx.cosh(x)
 
 
@@ -656,21 +656,13 @@ def equal(x1, x2):
     return mx.equal(x1, x2)
 
 
-def _cast_ints_to_floatx(x):
-    x = convert_to_tensor(x)
-    dtype = standardize_dtype(x.dtype)
-    if "int" in dtype or dtype == "bool":
-        return cast(x, config.floatx())
-    return x
-
-
 def exp(x):
-    x = _cast_ints_to_floatx(x)
+    x = promote_to_float(x)
     return mx.exp(x)
 
 
 def exp2(x):
-    x = _cast_ints_to_floatx(x)
+    x = promote_to_float(x)
     return mx.power(2, x)
 
 
@@ -680,7 +672,7 @@ def expand_dims(x, axis):
 
 
 def expm1(x):
-    x = _cast_ints_to_floatx(x)
+    x = promote_to_float(x)
     # Metal's expm1 is inexact away from zero and exp(x) - 1 cancels near it.
     # Masking the unused expm1 input keeps its overflow out of the gradient.
     small = mx.abs(x) < 0.1
@@ -829,27 +821,27 @@ def linspace(
 
 
 def log(x):
-    x = convert_to_tensor(x)
+    x = promote_to_float(x)
     return mx.log(x)
 
 
 def log10(x):
-    x = convert_to_tensor(x)
+    x = promote_to_float(x)
     return mx.log10(x)
 
 
 def log1p(x):
-    x = convert_to_tensor(x)
+    x = promote_to_float(x)
     return mx.log1p(x)
 
 
 def log2(x):
-    x = convert_to_tensor(x)
+    x = promote_to_float(x)
     return mx.log2(x)
 
 
 def logaddexp(x1, x2):
-    x1, x2 = _operands_by_value(x1, x2)
+    x1, x2 = _promote_to_float(x1, x2)
     return mx.logaddexp(x1, x2)
 
 
@@ -1228,7 +1220,7 @@ def real(x):
 
 
 def reciprocal(x):
-    x = convert_to_tensor(x)
+    x = promote_to_float(x)
     return mx.reciprocal(x)
 
 
@@ -1285,12 +1277,12 @@ def sign(x):
 
 
 def sin(x):
-    x = convert_to_tensor(x)
+    x = promote_to_float(x)
     return mx.sin(x)
 
 
 def sinh(x):
-    x = convert_to_tensor(x)
+    x = promote_to_float(x)
     return mx.sinh(x)
 
 
@@ -1349,12 +1341,12 @@ def take_along_axis(x, indices, axis=None):
 
 
 def tan(x):
-    x = convert_to_tensor(x)
+    x = promote_to_float(x)
     return mx.tan(x)
 
 
 def tanh(x):
-    x = convert_to_tensor(x)
+    x = promote_to_float(x)
     return mx.tanh(x)
 
 
@@ -1470,12 +1462,12 @@ def where(condition, x1=None, x2=None):
 
 
 def divide(x1, x2):
-    x1, x2 = _operands_by_value(x1, x2)
+    x1, x2 = _promote_to_float(x1, x2)
     return mx.divide(x1, x2)
 
 
 def divide_no_nan(x1, x2):
-    x1, x2 = _promote(x1, x2)
+    x1, x2 = _promote_to_float(x1, x2)
     safe_x2 = mx.where(x2 == 0, 1, x2)
     return mx.where(x2 == 0, 0, mx.divide(x1, safe_x2))
 
@@ -1509,7 +1501,7 @@ def square(x):
 
 
 def sqrt(x):
-    x = convert_to_tensor(x)
+    x = promote_to_float(x)
     return mx.sqrt(x)
 
 

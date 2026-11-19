@@ -95,12 +95,12 @@ def softplus(x):
 
 
 def softsign(x):
-    x = convert_to_tensor(x)
+    x = promote_to_float(x)
     return x / (1 + mx.abs(x))
 
 
 def soft_shrink(x, threshold=0.5):
-    x = convert_to_tensor(x)
+    x = promote_to_float(x)
     return mx.where(
         x > threshold,
         x - threshold,
@@ -129,7 +129,6 @@ def silu(x):
 
 
 def squareplus(x, b=4):
-    x = convert_to_tensor(x)
     x = promote_to_float(x)
     b = convert_to_tensor(b, dtype=x.dtype)
     y = x + mx.sqrt(x**2 + b)
@@ -142,7 +141,7 @@ def log_sigmoid(x):
 
 
 def leaky_relu(x, negative_slope=0.2):
-    x = convert_to_tensor(x)
+    x = promote_to_float(x)
     return nn.leaky_relu(x, negative_slope=negative_slope)
 
 
@@ -173,7 +172,7 @@ def elu(x, alpha=1.0):
 def selu(x):
     alpha = 1.6732632423543772848170429916717
     scale = 1.0507009873554804934193349852946
-    x = convert_to_tensor(x)
+    x = promote_to_float(x)
     # As in elu, x == 0 takes the exp branch.
     xneg = mx.minimum(0, x)
     xpos = mx.maximum(x, 0)
@@ -205,7 +204,7 @@ def hard_tanh(x):
 
 
 def hard_shrink(x, threshold=0.5):
-    x = convert_to_tensor(x)
+    x = promote_to_float(x)
     return nn.hard_shrink(x, lambd=threshold)
 
 
@@ -222,7 +221,6 @@ def softmax(x, axis=-1):
 
 
 def log_softmax(x, axis=-1):
-    x = convert_to_tensor(x)
     x = promote_to_float(x)
     # mlx logsumexp rejects empty input and the result is empty as well.
     if x.size == 0:
