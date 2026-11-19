@@ -21,6 +21,16 @@ from keras_mlx.src.ops.core import lapack_float
 from keras_mlx.src.ops.core import scatter
 from keras_mlx.src.ops.core import to_mlx_dtype
 
+_PYTHON_SCALARS = (bool, int, float, complex)
+
+
+def _convert_non_scalars(*xs):
+    # Convert each list once. Python scalars stay as they are.
+    return [
+        x if isinstance(x, _PYTHON_SCALARS) else convert_to_tensor(x)
+        for x in xs
+    ]
+
 
 def _result_dtype(*xs):
     # Python scalars have no dtype so they stay weak in result_type.
@@ -30,6 +40,7 @@ def _result_dtype(*xs):
 def _promote(*xs):
     # mlx promotes 64-bit ints and uint32 with a signed int to 64-bit, while the
     # keras lattice gives int32 or uint32. Cast to result_type to follow it.
+    xs = _convert_non_scalars(*xs)
     dtype = _result_dtype(*xs)
     return [convert_to_tensor(x, dtype) for x in xs]
 
@@ -217,12 +228,9 @@ def append(x1, x2, axis=None):
 
 def arange(start, stop=None, step=None, dtype=None):
     if dtype is None:
-        dtypes_to_resolve = [getattr(start, "dtype", type(start))]
-        if stop is not None:
-            dtypes_to_resolve.append(getattr(stop, "dtype", type(stop)))
-        if step is not None:
-            dtypes_to_resolve.append(getattr(step, "dtype", type(step)))
-        dtype = result_type(*dtypes_to_resolve)
+        dtype = _result_dtype(
+            *[x for x in (start, stop, step) if x is not None]
+        )
     dtype = to_mlx_dtype(dtype)
     if stop is None:
         stop = start
@@ -395,14 +403,12 @@ def bitwise_xor(x, y):
 
 
 def _shift(op, x, y):
-    # Take the result dtype before converting so Python scalars stay weak.
+    x, y = _convert_non_scalars(x, y)
     result_dtype = _result_dtype(x, y)
     # jax and numpy shift booleans as integers.
     if result_dtype == "bool":
         result_dtype = "int32"
     x = convert_to_tensor(x)
-    if not isinstance(y, int):
-        y = convert_to_tensor(y)
     mlx_result_dtype = to_mlx_dtype(result_dtype)
     result = op(x, y)
     if result.dtype != mlx_result_dtype:
@@ -786,12 +792,7 @@ def linspace(
     start = convert_to_tensor(start)
     stop = convert_to_tensor(stop)
     if dtype is None:
-        dtypes_to_resolve = [
-            getattr(start, "dtype", type(start)),
-            getattr(stop, "dtype", type(stop)),
-            float,
-        ]
-        dtype = result_type(*dtypes_to_resolve)
+        dtype = result_type(start.dtype, stop.dtype, float)
     mlx_dtype = to_mlx_dtype(dtype)
 
     # mx.linspace takes Python scalars and a plain int for num.
@@ -1479,18 +1480,8 @@ def where(condition, x1=None, x2=None):
     elif x1 is None or x2 is None:
         raise ValueError("`x1` and `x2` either both should be `None`")
 
-    # handling of python dtypes similar to numpy's backend
-    if not isinstance(x1, (int, float)):
-        x1 = convert_to_tensor(x1)
-    if not isinstance(x2, (int, float)):
-        x2 = convert_to_tensor(x2)
-    dtype = result_type(
-        getattr(x1, "dtype", type(x1)),
-        getattr(x2, "dtype", type(x2)),
-    )
+    x1, x2 = _promote(x1, x2)
     condition = convert_to_tensor(condition)
-    x1 = convert_to_tensor(x1, dtype)
-    x2 = convert_to_tensor(x2, dtype)
     return mx.where(condition, x1, x2)
 
 
@@ -1584,19 +1575,12 @@ def eye(N, M=None, k=0, dtype=None):
 
 
 def floor_divide(x1, x2):
-    if not isinstance(x1, (int, float)):
-        x1 = convert_to_tensor(x1)
-    if not isinstance(x2, (int, float)):
-        x2 = convert_to_tensor(x2)
-    dtype = result_type(
-        getattr(x1, "dtype", type(x1)), getattr(x2, "dtype", type(x2))
-    )
+    x1, x2 = _promote(x1, x2)
     # jax and numpy floor divide booleans as integers.
-    if dtype == "bool":
-        dtype = "int32"
-    x1 = convert_to_tensor(x1, dtype=dtype)
-    x2 = convert_to_tensor(x2, dtype=dtype)
-    if "int" in standardize_dtype(dtype):
+    if x1.dtype == mx.bool_:
+        x1 = x1.astype(mx.int32)
+        x2 = x2.astype(mx.int32)
+    if mx.issubdtype(x1.dtype, mx.integer):
         # The Metal kernel has no zero check.
         zero = x2 == 0
         divisor = mx.where(zero, mx.ones_like(x2), x2)
@@ -2129,12 +2113,8 @@ def flipud(x):
 
 
 def fmax(x1, x2):
-    dtype = result_type(
-        getattr(x1, "dtype", type(x1)), getattr(x2, "dtype", type(x2))
-    )
-    x1 = convert_to_tensor(x1, dtype)
-    x2 = convert_to_tensor(x2, dtype)
-    if "float" in dtype:
+    x1, x2 = _promote(x1, x2)
+    if mx.issubdtype(x1.dtype, mx.floating):
         return mx.where(
             mx.isnan(x1), x2, mx.where(mx.isnan(x2), x1, mx.maximum(x1, x2))
         )
@@ -2142,12 +2122,8 @@ def fmax(x1, x2):
 
 
 def fmin(x1, x2):
-    dtype = result_type(
-        getattr(x1, "dtype", type(x1)), getattr(x2, "dtype", type(x2))
-    )
-    x1 = convert_to_tensor(x1, dtype)
-    x2 = convert_to_tensor(x2, dtype)
-    if "float" in dtype:
+    x1, x2 = _promote(x1, x2)
+    if mx.issubdtype(x1.dtype, mx.floating):
         return mx.where(
             mx.isnan(x1), x2, mx.where(mx.isnan(x2), x1, mx.minimum(x1, x2))
         )
