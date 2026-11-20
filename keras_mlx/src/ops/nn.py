@@ -9,6 +9,7 @@ import mlx.nn as nn
 from keras.src.backend import config
 from keras.src.backend.common import is_float_dtype
 from keras.src.backend.common import result_type
+from keras.src.backend.common import standardize_data_format
 from keras.src.backend.common import standardize_dtype
 from keras.src.backend.common.backend_utils import canonicalize_axis
 from keras.src.backend.common.backend_utils import (
@@ -17,7 +18,6 @@ from keras.src.backend.common.backend_utils import (
 from keras.src.backend.common.backend_utils import (
     compute_conv_transpose_padding_args_for_jax,
 )
-from keras.src.backend.config import standardize_data_format
 from keras.src.utils.argument_validation import standardize_tuple
 from keras_mlx.src.ops.core import cast
 from keras_mlx.src.ops.core import convert_to_tensor
