@@ -1,3 +1,4 @@
+import contextlib
 import itertools
 import warnings
 
@@ -471,8 +472,7 @@ class Trainer(BaseTrainer):
 
     def _eval_captured_arrays(self):
         # Lazy arrays outside variables, like adapt() state or the constants
-        # of a functional graph, look uncaptured to mx.compile. Callers run
-        # this before their early return, so a later adapt() is seen.
+        # of a functional graph, look uncaptured to mx.compile.
         captured = []
         for layer in self._flatten_layers():
             # The arrays can sit inside list or dict attributes.
@@ -486,14 +486,24 @@ class Trainer(BaseTrainer):
                 for nodes in function._nodes_by_depth.values():
                     for node in nodes:
                         captured.extend(node.arguments._flat_arguments)
-        captured = [v for v in captured if isinstance(v, mx.array)]
-        if captured:
-            mx.eval(*captured)
+        for value in captured:
+            if isinstance(value, mx.array):
+                # mlx raises for a tensor a layer kept from an earlier trace,
+                # which the step does not read.
+                with contextlib.suppress(ValueError):
+                    mx.eval(value)
 
     def _compile_step(self, step):
         if self.run_eagerly or not self.jit_compile:
             return step
-        compiled = mx.compile(_with_tracing_flag(step))
+        flagged_step = _with_tracing_flag(step)
+
+        def step_with_evaluated_arrays(state, data):
+            # Runs on every trace. A later adapt() is seen on the next trace.
+            self._eval_captured_arrays()
+            return flagged_step(state, data)
+
+        compiled = mx.compile(step_with_evaluated_arrays)
 
         def compiled_step(state, data):
             if self.jit_compile:
@@ -512,7 +522,6 @@ class Trainer(BaseTrainer):
         return compiled_step
 
     def make_train_function(self, force=False):
-        self._eval_captured_arrays()
         if self.train_function is not None and not force:
             return
         self._broadcast_weights()
@@ -522,7 +531,6 @@ class Trainer(BaseTrainer):
         self.train_function = step_function
 
     def make_test_function(self, force=False):
-        self._eval_captured_arrays()
         if self.test_function is not None and not force:
             return
         self._broadcast_weights()
@@ -532,7 +540,6 @@ class Trainer(BaseTrainer):
         self.test_function = step_function
 
     def make_predict_function(self, force=False):
-        self._eval_captured_arrays()
         if self.predict_function is not None and not force:
             return
 
