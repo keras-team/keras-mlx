@@ -12,6 +12,7 @@ from keras.src.backend import config
 from keras.src.backend.common.stateless_scope import StatelessScope
 from keras.src.distribution.distribution_lib import DataParallel
 from keras.src.distribution.distribution_lib import distribution
+from keras.src.ops.function import Function
 from keras.src.trainers.data_adapters import array_slicing
 from keras.src.trainers.data_adapters import data_adapter_utils
 from keras.src.trainers.epoch_iterator import EpochIterator
@@ -469,16 +470,23 @@ class Trainer(BaseTrainer):
         return iterator_step
 
     def _eval_captured_arrays(self):
-        # Lazy arrays outside variables, like adapt() state, look uncaptured to
-        # mx.compile. Callers run this before their early return, so a later
-        # adapt() is seen.
-        captured = [
-            value
-            for layer in self._flatten_layers()
+        # Lazy arrays outside variables, like adapt() state or the constants
+        # of a functional graph, look uncaptured to mx.compile. Callers run
+        # this before their early return, so a later adapt() is seen.
+        captured = []
+        for layer in self._flatten_layers():
             # The arrays can sit inside list or dict attributes.
-            for value in tree.flatten(vars(layer))
-            if isinstance(value, mx.array)
-        ]
+            values = tree.flatten(vars(layer))
+            captured.extend(values)
+            functions = [v for v in values if isinstance(v, Function)]
+            if isinstance(layer, Function):
+                functions.append(layer)
+            for function in functions:
+                # The graph keeps eager tensors passed to its ops.
+                for nodes in function._nodes_by_depth.values():
+                    for node in nodes:
+                        captured.extend(node.arguments._flat_arguments)
+        captured = [v for v in captured if isinstance(v, mx.array)]
         if captured:
             mx.eval(*captured)
 
