@@ -361,6 +361,14 @@ def affine_transform(
             f"Received: transform.shape={transform.shape}"
         )
 
+    batch_size = images.shape[0] if len(images.shape) == 4 else 1
+    if len(transform.shape) == 2 and transform.shape[0] not in (1, batch_size):
+        raise ValueError(
+            "Invalid transform shape: expected one transform or one per "
+            f"image. Received: images.shape={images.shape}, "
+            f"transform.shape={transform.shape}"
+        )
+
     # unbatched case
     need_squeeze = False
     if len(images.shape) == 3:
@@ -372,8 +380,6 @@ def affine_transform(
     if data_format == "channels_first":
         images = mx.transpose(images, (0, 2, 3, 1))
 
-    batch_size = images.shape[0]
-
     # get indices
     meshgrid = mx.meshgrid(
         *[mx.arange(size) for size in images.shape[1:]], indexing="ij"
@@ -381,7 +387,6 @@ def affine_transform(
     indices = mx.concatenate(
         [mx.expand_dims(x, axis=-1) for x in meshgrid], axis=-1
     )
-    indices = mx.tile(indices, (batch_size, 1, 1, 1, 1))
 
     # Swap the values on a copy so the caller's transform is left untouched.
     a0 = transform[:, 0]
@@ -396,13 +401,14 @@ def affine_transform(
 
     # deal with transform
     transform = mx.pad(transform, pad_width=[[0, 0], [0, 1]], constant_values=1)
-    transform = mx.reshape(transform, (batch_size, 3, 3))
+    transform = mx.reshape(transform, (-1, 3, 3))
     offset = transform[:, 0:2, 2]
     offset = mx.pad(offset, pad_width=[[0, 0], [0, 1]])
     transform[:, 0:2, 2] = 0
 
     # transform the indices
-    coordinates = mx.einsum("Bhwij, Bjk -> Bhwik", indices, transform)
+    # A single transform keeps a batch of 1 and broadcasts over the images.
+    coordinates = mx.einsum("hwij, Bjk -> Bhwik", indices, transform)
     coordinates = mx.moveaxis(coordinates, source=-1, destination=1)
     coordinates += offset.reshape((*offset.shape, 1, 1, 1))
 
