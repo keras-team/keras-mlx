@@ -6,6 +6,7 @@ from itertools import accumulate
 import mlx.core as mx
 import mlx.nn as nn
 
+from keras.src.backend import config
 from keras.src.backend.common import is_float_dtype
 from keras.src.backend.common import result_type
 from keras.src.backend.common import standardize_dtype
@@ -16,8 +17,6 @@ from keras.src.backend.common.backend_utils import (
 from keras.src.backend.common.backend_utils import (
     compute_conv_transpose_padding_args_for_jax,
 )
-from keras.src.backend.config import epsilon
-from keras.src.backend.config import floatx
 from keras.src.backend.config import standardize_data_format
 from keras.src.utils.argument_validation import standardize_tuple
 from keras_mlx.src.ops.core import cast
@@ -718,7 +717,7 @@ def categorical_crossentropy(target, output, from_logits=False, axis=-1):
         log_prob = log_softmax(output, axis=axis)
     else:
         output = output / mx.sum(output, axis=axis, keepdims=True)
-        output = mx.clip(output, epsilon(), 1 - epsilon())
+        output = mx.clip(output, config.epsilon(), 1 - config.epsilon())
         log_prob = mx.log(output)
 
     return -mx.sum(target * log_prob, axis=axis)
@@ -771,7 +770,9 @@ def sparse_categorical_crossentropy(target, output, from_logits=False, axis=-1):
         log_prob = log_softmax(output)
     else:
         output = output / output.sum(axis=-1, keepdims=True)
-        output = mx.minimum(mx.maximum(output, epsilon()), 1 - epsilon())
+        output = mx.minimum(
+            mx.maximum(output, config.epsilon()), 1 - config.epsilon()
+        )
         log_prob = mx.log(output)
 
     loss = -mx.take_along_axis(log_prob, target[..., None], axis=-1).squeeze(-1)
@@ -782,7 +783,7 @@ def binary_crossentropy(target, output, from_logits=False):
     target = convert_to_tensor(target)
     output = convert_to_tensor(output)
     if not is_float_dtype(output.dtype):
-        output = cast(output, floatx())
+        output = cast(output, config.floatx())
     target = cast(target, output.dtype)
 
     if target.shape != output.shape:
@@ -795,7 +796,9 @@ def binary_crossentropy(target, output, from_logits=False):
     if from_logits:
         return nn.losses.binary_cross_entropy(output, target, reduction="none")
     else:
-        output = mx.minimum(mx.maximum(output, epsilon()), 1 - epsilon())
+        output = mx.minimum(
+            mx.maximum(output, config.epsilon()), 1 - config.epsilon()
+        )
         return -target * mx.log(output) - (1 - target) * mx.log(1 - output)
 
 
