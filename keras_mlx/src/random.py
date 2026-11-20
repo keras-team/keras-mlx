@@ -59,24 +59,15 @@ def normal(shape, mean=0.0, stddev=1.0, dtype=None, seed=None):
     dtype = dtype or config.floatx()
     dtype = to_mlx_dtype(dtype)
     seed = mlx_draw_seed(seed)
-    # float64 sampling is not supported on the GPU stream.
-    stream = mx.cpu if dtype == mx.float64 else mx.default_device()
-    with mx.stream(stream):
-        return mx.random.normal(
-            shape=shape, loc=mean, scale=stddev, dtype=dtype, key=seed
-        )
+    return mx.random.normal(
+        shape=shape, loc=mean, scale=stddev, dtype=dtype, key=seed
+    )
 
 
 def uniform(shape, minval=0.0, maxval=1.0, dtype=None, seed=None):
     dtype = dtype or config.floatx()
     dtype = to_mlx_dtype(dtype)
     seed = mlx_draw_seed(seed)
-    if dtype == mx.float64:
-        # mlx has no float64 uniform, so sample float32 and scale in float64
-        # on the CPU stream. Remove once mlx has one.
-        with mx.stream(mx.cpu):
-            sample = mx.random.uniform(shape=shape, key=seed).astype(dtype)
-            return sample * (maxval - minval) + minval
     return mx.random.uniform(
         low=minval, high=maxval, shape=shape, dtype=dtype, key=seed
     )
@@ -96,8 +87,9 @@ def randint(shape, minval, maxval, dtype="int32", seed=None):
     # mx.random.randint skips integers past 2**24, split returns raw bits.
     words = mx.random.split(seed, math.prod(shape)).astype(mx.uint64)
     bits = ((words[:, 0] << 32) | words[:, 1]).reshape(shape)
-    low = convert_to_tensor(minval, "int64")
-    high = convert_to_tensor(maxval, "int64")
+    # The bounds fit int32 like on jax. Their difference may not.
+    low = convert_to_tensor(minval).astype(mx.int64)
+    high = convert_to_tensor(maxval).astype(mx.int64)
     # An empty range returns minval.
     span = mx.where(high > low, high - low, 1).astype(mx.uint64)
     offset = mx.remainder(bits, span).astype(mx.int64)
@@ -108,13 +100,6 @@ def truncated_normal(shape, mean=0.0, stddev=1.0, dtype=None, seed=None):
     dtype = dtype or config.floatx()
     dtype = to_mlx_dtype(dtype)
     seed = mlx_draw_seed(seed)
-    if dtype == mx.float64:
-        # Same float32 sample and float64 scale as uniform.
-        with mx.stream(mx.cpu):
-            sample = mx.random.truncated_normal(
-                lower=-2.0, upper=2.0, shape=shape, key=seed
-            )
-            return sample.astype(dtype) * stddev + mean
     sample = mx.random.truncated_normal(
         lower=-2.0, upper=2.0, shape=shape, dtype=dtype, key=seed
     )
