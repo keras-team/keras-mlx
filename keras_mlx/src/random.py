@@ -3,8 +3,8 @@ import math
 
 import mlx.core as mx
 
+from keras.src.backend import config
 from keras.src.backend.common import global_state
-from keras.src.backend.config import floatx
 from keras.src.random.seed_generator import SeedGenerator  # noqa: F401
 from keras.src.random.seed_generator import draw_seed
 from keras.src.random.seed_generator import make_default_seed  # noqa: F401
@@ -56,7 +56,7 @@ def mlx_draw_seed(seed):
 
 
 def normal(shape, mean=0.0, stddev=1.0, dtype=None, seed=None):
-    dtype = dtype or floatx()
+    dtype = dtype or config.floatx()
     dtype = to_mlx_dtype(dtype)
     seed = mlx_draw_seed(seed)
     # float64 sampling is not supported on the GPU stream.
@@ -68,7 +68,7 @@ def normal(shape, mean=0.0, stddev=1.0, dtype=None, seed=None):
 
 
 def uniform(shape, minval=0.0, maxval=1.0, dtype=None, seed=None):
-    dtype = dtype or floatx()
+    dtype = dtype or config.floatx()
     dtype = to_mlx_dtype(dtype)
     seed = mlx_draw_seed(seed)
     if dtype == mx.float64:
@@ -105,7 +105,7 @@ def randint(shape, minval, maxval, dtype="int32", seed=None):
 
 
 def truncated_normal(shape, mean=0.0, stddev=1.0, dtype=None, seed=None):
-    dtype = dtype or floatx()
+    dtype = dtype or config.floatx()
     dtype = to_mlx_dtype(dtype)
     seed = mlx_draw_seed(seed)
     if dtype == mx.float64:
@@ -161,7 +161,7 @@ def gamma(shape, alpha, dtype=None, seed=None):
     if isinstance(shape, int):
         shape = (shape,)
 
-    dtype = to_mlx_dtype(dtype or floatx())
+    dtype = to_mlx_dtype(dtype or config.floatx())
 
     # The sampler below is elementwise, so broadcast alpha over the lanes and
     # an array alpha costs no more than a scalar one. Flatten a single
@@ -238,7 +238,7 @@ def gamma(shape, alpha, dtype=None, seed=None):
 
 def beta(shape, alpha, beta, dtype=None, seed=None):
     # beta distribution using Gamma(alpha) / (Gamma(alpha) + Gamma(beta))
-    dtype = to_mlx_dtype(dtype or floatx())
+    dtype = to_mlx_dtype(dtype or config.floatx())
 
     if isinstance(shape, int):
         shape = (shape,)
@@ -262,7 +262,7 @@ def beta(shape, alpha, beta, dtype=None, seed=None):
 
 def binomial(shape, counts, probabilities, dtype=None, seed=None):
     # Binomial(n, p) distribution by summing n Bernoulli(p) samples
-    dtype = to_mlx_dtype(dtype or floatx())
+    dtype = to_mlx_dtype(dtype or config.floatx())
     key = mlx_draw_seed(seed)
 
     if isinstance(shape, int):
