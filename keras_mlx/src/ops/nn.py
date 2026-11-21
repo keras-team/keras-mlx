@@ -449,6 +449,10 @@ def grouped_conv3d(inputs, kernel, groups, **conv_args):
 
 
 def _conv_general(inputs, kernel, groups, **conv_args):
+    if inputs.shape[0] == 0:
+        # mlx raises or crashes on the kernel gradient of an empty batch,
+        # which is zero.
+        kernel = mx.stop_gradient(kernel)
     # mlx only supports groups in 1D and 2D convolutions.
     if inputs.ndim == 5 and groups > 1:
         return grouped_conv3d(inputs, kernel, groups, **conv_args)
@@ -649,14 +653,14 @@ def conv_transpose(
         )
     groups = channels // kernel_in_channels
 
-    result = mx.conv_general(
+    result = _conv_general(
         inputs,
         kernel,
+        groups,
         stride=1,  # stride is handled by input_dilation
         padding=mlx_padding,
         kernel_dilation=dilation_rate,
         input_dilation=strides,
-        groups=groups,
         flip=True,
     )
 
