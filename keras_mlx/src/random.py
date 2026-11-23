@@ -3,8 +3,8 @@ import math
 
 import mlx.core as mx
 
+from keras.src.backend import config
 from keras.src.backend.common import global_state
-from keras.src.backend.config import floatx
 from keras.src.random.seed_generator import SeedGenerator  # noqa: F401
 from keras.src.random.seed_generator import draw_seed
 from keras.src.random.seed_generator import make_default_seed  # noqa: F401
@@ -56,19 +56,16 @@ def mlx_draw_seed(seed):
 
 
 def normal(shape, mean=0.0, stddev=1.0, dtype=None, seed=None):
-    dtype = dtype or floatx()
+    dtype = dtype or config.floatx()
     dtype = to_mlx_dtype(dtype)
     seed = mlx_draw_seed(seed)
-    # float64 sampling is not supported on the GPU stream.
-    stream = mx.cpu if dtype == mx.float64 else mx.default_device()
-    with mx.stream(stream):
-        return mx.random.normal(
-            shape=shape, loc=mean, scale=stddev, dtype=dtype, key=seed
-        )
+    return mx.random.normal(
+        shape=shape, loc=mean, scale=stddev, dtype=dtype, key=seed
+    )
 
 
 def uniform(shape, minval=0.0, maxval=1.0, dtype=None, seed=None):
-    dtype = dtype or floatx()
+    dtype = dtype or config.floatx()
     dtype = to_mlx_dtype(dtype)
     seed = mlx_draw_seed(seed)
     return mx.random.uniform(
@@ -90,8 +87,9 @@ def randint(shape, minval, maxval, dtype="int32", seed=None):
     # mx.random.randint skips integers past 2**24, split returns raw bits.
     words = mx.random.split(seed, math.prod(shape)).astype(mx.uint64)
     bits = ((words[:, 0] << 32) | words[:, 1]).reshape(shape)
-    low = convert_to_tensor(minval, "int64")
-    high = convert_to_tensor(maxval, "int64")
+    # The bounds fit int32 like on jax. Their difference may not.
+    low = convert_to_tensor(minval).astype(mx.int64)
+    high = convert_to_tensor(maxval).astype(mx.int64)
     # An empty range returns minval.
     span = mx.where(high > low, high - low, 1).astype(mx.uint64)
     offset = mx.remainder(bits, span).astype(mx.int64)
@@ -99,7 +97,7 @@ def randint(shape, minval, maxval, dtype="int32", seed=None):
 
 
 def truncated_normal(shape, mean=0.0, stddev=1.0, dtype=None, seed=None):
-    dtype = dtype or floatx()
+    dtype = dtype or config.floatx()
     dtype = to_mlx_dtype(dtype)
     seed = mlx_draw_seed(seed)
     sample = mx.random.truncated_normal(
@@ -144,14 +142,11 @@ def shuffle(x, axis=0, seed=None):
 
 
 def gamma(shape, alpha, dtype=None, seed=None):
-    # Ref: jax.random.gamma
-    # Ref: Marsaglia and Tsang method for generating gamma variables
-    # Algorithm description can be found here:
-    # https://en.wikipedia.org/wiki/Gamma_distribution#Random_variate_generation
+    # Ref: jax.random.gamma, Marsaglia and Tsang method for gamma variables.
     if isinstance(shape, int):
         shape = (shape,)
 
-    dtype = to_mlx_dtype(dtype or floatx())
+    dtype = to_mlx_dtype(dtype or config.floatx())
 
     # The sampler below is elementwise, so broadcast alpha over the lanes and
     # an array alpha costs no more than a scalar one. Flatten a single
@@ -195,10 +190,9 @@ def gamma(shape, alpha, dtype=None, seed=None):
         results = mx.where(accept, d * v, results)
         done = mx.logical_or(done, accept)
 
-        # Stop once every lane has a sample. Reading `done` frees the
-        # round's intermediates, which is what keeps a large `shape` off the
-        # Metal buffer limit. While tracing the read is illegal, so all
-        # GAMMA_ROUNDS run instead.
+        # Stop once every lane is done. The read also frees intermediates,
+        # keeping large shapes under the Metal limit. While tracing it raises
+        # ValueError, so all rounds run.
         try:
             if bool(mx.all(done)):
                 break
@@ -229,7 +223,7 @@ def gamma(shape, alpha, dtype=None, seed=None):
 
 def beta(shape, alpha, beta, dtype=None, seed=None):
     # beta distribution using Gamma(alpha) / (Gamma(alpha) + Gamma(beta))
-    dtype = to_mlx_dtype(dtype or floatx())
+    dtype = to_mlx_dtype(dtype or config.floatx())
 
     if isinstance(shape, int):
         shape = (shape,)
@@ -253,7 +247,7 @@ def beta(shape, alpha, beta, dtype=None, seed=None):
 
 def binomial(shape, counts, probabilities, dtype=None, seed=None):
     # Binomial(n, p) distribution by summing n Bernoulli(p) samples
-    dtype = to_mlx_dtype(dtype or floatx())
+    dtype = to_mlx_dtype(dtype or config.floatx())
     key = mlx_draw_seed(seed)
 
     if isinstance(shape, int):

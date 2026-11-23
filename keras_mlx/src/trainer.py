@@ -3,21 +3,42 @@ import warnings
 
 import mlx.core as mx
 import numpy as np
+from mlx.nn import average_gradients
 
 from keras.src import callbacks as callbacks_module
 from keras.src import optimizers as optimizers_module
 from keras.src import tree
 from keras.src.backend import config
 from keras.src.backend.common.stateless_scope import StatelessScope
+from keras.src.distribution.distribution_lib import DataParallel
+from keras.src.distribution.distribution_lib import distribution
+from keras.src.ops.function import Function
 from keras.src.trainers.data_adapters import array_slicing
 from keras.src.trainers.data_adapters import data_adapter_utils
 from keras.src.trainers.epoch_iterator import EpochIterator
 from keras.src.trainers.trainer import BaseTrainer
 from keras.src.utils import traceback_utils
 from keras.src.utils.python_utils import pythonify_logs
+from keras_mlx.src import distribution_lib
+from keras_mlx.src.ops.core import UnboundedLoopError
 from keras_mlx.src.ops.core import convert_to_numpy
 from keras_mlx.src.ops.core import convert_to_tensor
 from keras_mlx.src.random import tracing_compiled_step
+
+
+def _replica_group():
+    """Return the process group when training data parallel, else `None`."""
+    dist = distribution()
+    if dist is None:
+        return None
+    if not isinstance(dist, DataParallel):
+        raise NotImplementedError(
+            "The MLX backend only supports `keras.distribution.DataParallel`. "
+            f"Received: distribution={dist}"
+        )
+    if dist.num_processes == 1:
+        return None
+    return mx.distributed.init()
 
 
 def _with_tracing_flag(step):
@@ -27,6 +48,10 @@ def _with_tracing_flag(step):
             return step(*args)
 
     return traced_step
+
+
+def _data_to_mlx(data):
+    return tree.map_structure(convert_to_tensor, data, none_is_leaf=False)
 
 
 class _State:
@@ -59,9 +84,6 @@ class Trainer(BaseTrainer):
         self.test_function = None
         self.predict_function = None
         self._state_synced = True
-
-    def _data_to_mlx(self, data):
-        return tree.map_structure(convert_to_tensor, data, none_is_leaf=False)
 
     def state_sync(self):
         if not getattr(self, "_mlx_state", None) or self._state_synced:
@@ -234,7 +256,24 @@ class Trainer(BaseTrainer):
             metrics_variables,
         ) = state
         x, y, sample_weight = data_adapter_utils.unpack_x_y_sample_weight(data)
-        grad_fn = mx.value_and_grad(self.compute_loss_and_updates)
+        group = _replica_group()
+        assigned = []
+
+        def loss_and_updates(trainable, non_trainable, *args, **kwargs):
+            outputs = self.compute_loss_and_updates(
+                trainable, non_trainable, *args, **kwargs
+            )
+            _, _, _, new_non_trainable, _ = outputs
+            # Unassigned variables, like frozen weights, come back as the
+            # input arrays. mx.value_and_grad returns new array objects, so
+            # compare them here.
+            assigned[:] = [
+                new is not old
+                for new, old in zip(new_non_trainable, non_trainable)
+            ]
+            return outputs
+
+        grad_fn = mx.value_and_grad(loss_and_updates)
 
         if trainable_variables:
             (
@@ -256,6 +295,8 @@ class Trainer(BaseTrainer):
                 training=True,
                 optimizer_variables=optimizer_variables,
             )
+            if group is not None:
+                grads = average_gradients(grads, group)
 
             (
                 trainable_variables,
@@ -270,7 +311,7 @@ class Trainer(BaseTrainer):
                 y_pred,
                 non_trainable_variables,
                 metrics_variables,
-            ) = self.compute_loss_and_updates(
+            ) = loss_and_updates(
                 trainable_variables,
                 non_trainable_variables,
                 metrics_variables,
@@ -280,6 +321,21 @@ class Trainer(BaseTrainer):
                 training=True,
                 optimizer_variables=optimizer_variables,
             )
+
+        if group is not None:
+            # Average the float state the step assigned, like the
+            # BatchNormalization moving mean, so the replicas stay equal.
+            floats = [
+                i
+                for i, v in enumerate(non_trainable_variables)
+                if assigned[i] and mx.issubdtype(v.dtype, mx.floating)
+            ]
+            averaged = average_gradients(
+                [non_trainable_variables[i] for i in floats], group
+            )
+            non_trainable_variables = list(non_trainable_variables)
+            for i, value in zip(floats, averaged):
+                non_trainable_variables[i] = value
 
         logs, metrics_variables = self._update_metrics_variables(
             metrics_variables, unscaled_loss, x, y, y_pred, sample_weight
@@ -339,6 +395,34 @@ class Trainer(BaseTrainer):
         )
         return outputs, (trainable_variables, non_trainable_variables)
 
+    def get_metrics_result(self):
+        group = _replica_group()
+        if group is None:
+            return super().get_metrics_result()
+        # Metric state is a sum over samples, so add up every replica's.
+        values = [
+            mx.distributed.all_sum(v.value, group=group)
+            for v in self.metrics_variables
+        ]
+        with StatelessScope(
+            state_mapping=list(zip(self.metrics_variables, values))
+        ):
+            return super().get_metrics_result()
+
+    def _broadcast_weights(self):
+        # Start every replica from the weights of process 0.
+        group = _replica_group()
+        if group is None:
+            return
+        variables = self.trainable_variables + self.non_trainable_variables
+        for v in variables:
+            # Sum bools as integers.
+            value = v.value.astype(mx.int32) if v.dtype == "bool" else v.value
+            value = distribution_lib.broadcast(value, group)
+            v.assign(value.astype(v.value.dtype))
+        # Run the collectives now, while every process is here.
+        mx.eval([v.value for v in variables])
+
     def _make_function(self, step_function, concatenate_outputs=False):
         if self.steps_per_execution > 1:
             if concatenate_outputs:
@@ -386,29 +470,53 @@ class Trainer(BaseTrainer):
         return iterator_step
 
     def _eval_captured_arrays(self):
-        # Layers may keep plain mlx arrays outside their variables, as
-        # Normalization does after adapt(). A lazy one carries a graph that
-        # mx.compile reads as an uncaptured input, so materialize them.
-        # Flatten rather than walk `vars` directly, the arrays may sit inside
-        # a list or dict attribute. Already evaluated arrays cost nothing, so
-        # this runs on every build and picks up a later adapt().
-        captured = [
-            value
-            for layer in self._flatten_layers()
-            for value in tree.flatten(vars(layer))
-            if isinstance(value, mx.array)
-        ]
+        # Lazy arrays outside variables, like adapt() state or the constants
+        # of a functional graph, look uncaptured to mx.compile. Callers run
+        # this before their early return, so a later adapt() is seen.
+        captured = []
+        for layer in self._flatten_layers():
+            # The arrays can sit inside list or dict attributes.
+            values = tree.flatten(vars(layer))
+            captured.extend(values)
+            functions = [v for v in values if isinstance(v, Function)]
+            if isinstance(layer, Function):
+                functions.append(layer)
+            for function in functions:
+                # The graph keeps eager tensors passed to its ops.
+                for nodes in function._nodes_by_depth.values():
+                    for node in nodes:
+                        captured.extend(node.arguments._flat_arguments)
+        captured = [v for v in captured if isinstance(v, mx.array)]
         if captured:
             mx.eval(*captured)
+
+    def _compile_step(self, step):
+        if self.run_eagerly or not self.jit_compile:
+            return step
+        compiled = mx.compile(_with_tracing_flag(step))
+
+        def compiled_step(state, data):
+            if self.jit_compile:
+                try:
+                    return compiled(state, data)
+                except UnboundedLoopError as e:
+                    # Every step function of the model reads this.
+                    self.jit_compile = False
+                    warnings.warn(
+                        f"{e} The model runs without `mx.compile`. Pass "
+                        "`maximum_iterations`, or `jit_compile=False` to "
+                        "`compile()`, to silence this warning."
+                    )
+            return step(state, data)
+
+        return compiled_step
 
     def make_train_function(self, force=False):
         self._eval_captured_arrays()
         if self.train_function is not None and not force:
             return
-        if not self.run_eagerly and self.jit_compile:
-            train_step = mx.compile(_with_tracing_flag(self.train_step))
-        else:
-            train_step = self.train_step
+        self._broadcast_weights()
+        train_step = self._compile_step(self.train_step)
 
         step_function = self._make_function(train_step)
         self.train_function = step_function
@@ -417,10 +525,8 @@ class Trainer(BaseTrainer):
         self._eval_captured_arrays()
         if self.test_function is not None and not force:
             return
-        if not self.run_eagerly and self.jit_compile:
-            test_step = mx.compile(_with_tracing_flag(self.test_step))
-        else:
-            test_step = self.test_step
+        self._broadcast_weights()
+        test_step = self._compile_step(self.test_step)
 
         step_function = self._make_function(test_step)
         self.test_function = step_function
@@ -430,10 +536,7 @@ class Trainer(BaseTrainer):
         if self.predict_function is not None and not force:
             return
 
-        if not self.run_eagerly and self.jit_compile:
-            predict_step = mx.compile(_with_tracing_flag(self.predict_step))
-        else:
-            predict_step = self.predict_step
+        predict_step = self._compile_step(self.predict_step)
 
         step_function = self._make_function(
             predict_step, concatenate_outputs=True
@@ -858,7 +961,7 @@ class Trainer(BaseTrainer):
             packed_data = data_adapter_utils.pack_x_y_sample_weight(
                 x, y=y, sample_weight=sample_weight
             )
-            yield self._data_to_mlx(packed_data)
+            yield _data_to_mlx(packed_data)
 
         # Maybe build model
         self._symbolic_build(data_batch=next(data()))
@@ -909,7 +1012,7 @@ class Trainer(BaseTrainer):
             packed_data = data_adapter_utils.pack_x_y_sample_weight(
                 x, y=y, sample_weight=sample_weight
             )
-            yield self._data_to_mlx(packed_data)
+            yield _data_to_mlx(packed_data)
 
         # Maybe build model
         self._symbolic_build(data_batch=next(data()))
@@ -955,7 +1058,7 @@ class Trainer(BaseTrainer):
         )
         self._state_synced = False
 
-        x = self._data_to_mlx(x)
+        x = _data_to_mlx(x)
 
         def data():
             yield (x,)
@@ -980,7 +1083,7 @@ class MLXEpochIterator(EpochIterator):
             return (
                 begin_step,
                 end_step,
-                tree.map_structure(convert_to_tensor, buffer),
+                _data_to_mlx(buffer),
             )
         raise StopIteration
 

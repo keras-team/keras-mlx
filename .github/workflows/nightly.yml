@@ -92,9 +92,34 @@ jobs:
               echo
               cat details.md
               echo
-              echo "Reference this issue with \`Fixes #<number>\` in the PR that fixes it."
+              echo "This issue closes itself when the nightly passes again."
             } > issue.md
             gh issue create --label ci-nightly \
               --title "Nightly CI against Keras master is failing" \
               --body-file issue.md
+          fi
+
+  resolve:
+    name: Close the tracking issue
+    needs: [tests]
+    # Runs on main only, a manual run on a branch says nothing about main.
+    if: >-
+      github.repository == 'keras-team/keras-mlx' &&
+      github.ref == 'refs/heads/main' &&
+      needs.tests.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+
+    steps:
+      - name: Close the open tracking issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          issue=$(gh issue list --label ci-nightly --state open \
+            --author "app/github-actions" --json number --jq '.[0].number')
+          if [ -n "$issue" ]; then
+            gh issue close "$issue" --comment "The nightly run passed again: $RUN_URL"
           fi

@@ -68,11 +68,8 @@ def rnn(
         successive_states = []
         successive_outputs = []
 
-        # Process the input tensors. The input tensor need to be split on the
-        # time_step dim, and reverse if go_backwards is True. In the case of
-        # nested input, the input is flattened and then transformed
-        # individually.  The result of this will be a tuple of lists, each of
-        # the item in tuple is list of the tensor with shape (batch, feature)
+        # Split the inputs on the time_step dim, reversed if go_backwards.
+        # Nested inputs are flattened, each becoming a list of (batch, feature).
         def _process_single_input_t(input_t):
             input_t = unstack(input_t)  # unstack for time_step dim
             if go_backwards:

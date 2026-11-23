@@ -1,4 +1,5 @@
 from keras.src.backend.common.name_scope import name_scope
+from keras_mlx.src import distribution_lib
 from keras_mlx.src import ops
 from keras_mlx.src import random
 from keras_mlx.src import rnn
@@ -10,7 +11,5 @@ SUPPORTS_SPARSE_TENSORS = False
 SUPPORTS_RAGGED_TENSORS = False
 SUPPORTS_COMPLEX_DTYPES = True
 SUPPORTS_GRADIENT = True
-# TODO: follow updates and adjust to thread safe when possible
-IS_THREAD_SAFE = False  # False as of mlx 0.24.0
-
-distribution_lib = None
+# mlx does not support evaluating one graph from several threads.
+IS_THREAD_SAFE = False
