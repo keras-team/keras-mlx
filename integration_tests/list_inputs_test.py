@@ -25,6 +25,11 @@ class ListInputsTest(testing.TestCase):
         self.assertDType(ops.add([1.5, 2.5], [1, 2]), "float32")
         self.assertDType(ops.fmax([1, 2], 1.5), "float32")
 
+    def test_sum_empty_list(self):
+        self.assertAllClose(ops.sum([]), 0.0)
+        self.assertAllClose(ops.sum(()), 0.0)
+        self.assertDType(ops.sum([]), "float32")
+
 
 class VariableArrayTest(testing.TestCase):
     def test_no_copy_with_dtype_change_raises(self):
