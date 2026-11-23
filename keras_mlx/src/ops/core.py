@@ -26,27 +26,52 @@ except ImportError:
 MLX_DTYPES = {
     "float16": mx.float16,
     "float32": mx.float32,
-    "float64": mx.float64,  # for mlx float64 only supported on cpu
     "uint8": mx.uint8,
     "uint16": mx.uint16,
     "uint32": mx.uint32,
-    "uint64": mx.uint64,
     "int8": mx.int8,
     "int16": mx.int16,
     "int32": mx.int32,
-    "int64": mx.int64,
     "bfloat16": mx.bfloat16,
     "bool": mx.bool_,
     "complex64": mx.complex64,
-    # mlx has no complex128, downcast like float64 to keep complex requests
-    # from raising.
-    "complex128": mx.complex64,
+}
+# keras only allows x64_mode "off" on mlx, so 64-bit dtypes are capped to
+# 32 bits like on jax.
+MLX_DTYPES.update(
+    {
+        dtype: MLX_DTYPES[capped]
+        for dtype, capped in dtypes.BIT64_TO_BIT32_DTYPE.items()
+    }
+)
+# The same cap for arrays that are already 64-bit. mlx has no complex128.
+_CAPPED_MLX_DTYPES = {
+    getattr(mx, dtype): MLX_DTYPES[dtype]
+    for dtype in dtypes.BIT64_TO_BIT32_DTYPE
+    if hasattr(mx, dtype)
+}
+_CAPPED_NUMPY_DTYPES = {
+    np.dtype(dtype): capped
+    for dtype, capped in dtypes.BIT64_TO_BIT32_DTYPE.items()
+}
+# The numpy dtype to cast a 64-bit numpy array to when a dtype is given.
+# mlx casts float32 to bfloat16 itself.
+_NUMPY_CAST_DTYPES = {
+    mlx_dtype: "float32" if dtype == "bfloat16" else dtype
+    for dtype, mlx_dtype in MLX_DTYPES.items()
+    if dtype not in dtypes.BIT64_TO_BIT32_DTYPE
+}
+# Name and limits of the integer dtypes.
+_INT_LIMITS = {
+    dtype: (name, mx.iinfo(dtype).min, mx.iinfo(dtype).max)
+    for name, dtype in MLX_DTYPES.items()
+    if "int" in name and name not in dtypes.BIT64_TO_BIT32_DTYPE
 }
 
 
 def to_mlx_dtype(dtype):
     if isinstance(dtype, mx.Dtype):
-        return dtype
+        return _CAPPED_MLX_DTYPES.get(dtype, dtype)
     standardized_dtype = MLX_DTYPES.get(standardize_dtype(dtype), None)
     if standardized_dtype is None:
         raise ValueError(f"Unsupported dtype for MLX: {dtype}")
@@ -60,6 +85,96 @@ def _is_h5py_dataset(obj):
     )
 
 
+def _astype(x, dtype):
+    if not mx.issubdtype(x.dtype, mx.inexact) or mx.issubdtype(
+        dtype, mx.inexact
+    ):
+        return x.astype(dtype)
+    # mlx sends the gradient through a float to int cast, jax and torch stop
+    # it. Remove once mlx stops it too.
+    x = mx.stop_gradient(x)
+    if dtype not in _INT_LIMITS:
+        return x.astype(dtype)
+    # The CPU cast wraps floats that are out of range or nan. Saturate and
+    # send nan to 0 like Metal and jax. Remove once the mlx CPU cast saturates.
+    if mx.issubdtype(x.dtype, mx.complexfloating):
+        x = mx.real(x)
+    _, low, high = _INT_LIMITS[dtype]
+    result = mx.clip(x, low, high).astype(dtype)
+    result = mx.where(x >= high, high, result)
+    return mx.where(mx.isnan(x), 0, result)
+
+
+def _int_fits(x, mlx_dtype):
+    limits = _INT_LIMITS.get(mlx_dtype)
+    return limits is not None and limits[1] <= x <= limits[2]
+
+
+def _check_python_int(x, mlx_dtype):
+    if not _int_fits(x, mlx_dtype):
+        name = _INT_LIMITS[mlx_dtype][0]
+        raise OverflowError(f"Python integer {x} out of bounds for {name}")
+
+
+def _wrap_python_int(x, mlx_dtype):
+    # Wraps like a cast from a wider integer dtype.
+    if mlx_dtype not in _INT_LIMITS or not isinstance(x, int):
+        return x
+    _, low, high = _INT_LIMITS[mlx_dtype]
+    return (x - low) % (high - low + 1) + low
+
+
+def _python_int_to_tensor(x, mlx_dtype):
+    # mlx wraps a Python int that does not fit, jax raises.
+    mlx_dtype = mlx_dtype or mx.int32
+    if mlx_dtype in _INT_LIMITS:
+        _check_python_int(x, mlx_dtype)
+        return mx.array(x, dtype=mlx_dtype)
+    # mlx cannot read an int past int64, so pass a float.
+    return mx.array(float(x), dtype=mlx_dtype)
+
+
+def _check_list_ints(values, mlx_dtype):
+    # Check the Python values. An eval here would hang in a forked process.
+    ints = [v for v in values if isinstance(v, int) and not isinstance(v, bool)]
+    if ints and mlx_dtype in _INT_LIMITS:
+        _check_python_int(min(ints), mlx_dtype)
+        _check_python_int(max(ints), mlx_dtype)
+
+
+def _list_to_tensor(x, mlx_dtype):
+    try:
+        result = mx.array(x)
+    except (ValueError, RuntimeError):
+        values = tree.flatten(x)
+        arrays = (np.generic, np.ndarray, mx.array)
+        if not any(isinstance(v, arrays) for v in values):
+            # mlx raises std::bad_cast for an int past int64.
+            target = mlx_dtype or mx.int32
+            if target in _INT_LIMITS:
+                _check_list_ints(values, target)
+                raise
+            if not any(type(v) is int for v in values):
+                raise
+            floats = tree.map_structure(
+                lambda v: float(v) if type(v) is int else v, x
+            )
+            return _list_to_tensor(floats, mlx_dtype)
+        # mlx rejects lists that hold numpy values, and float64 arrays on
+        # Metal.
+        x = np.asarray(x)
+        if mlx_dtype is not None or x.dtype.kind in "iuO":
+            _check_list_ints(values, mlx_dtype or mx.int32)
+        return convert_to_tensor(x, dtype=mlx_dtype)
+    target = mlx_dtype or _CAPPED_MLX_DTYPES.get(result.dtype, result.dtype)
+    if result.dtype == target:
+        return result
+    if mx.issubdtype(result.dtype, mx.integer):
+        # mlx infers int64 for Python ints past int32.
+        _check_list_ints(tree.flatten(x), target)
+    return convert_to_tensor(result, dtype=target)
+
+
 def convert_to_tensor(x, dtype=None, sparse=None, ragged=None):
     if sparse:
         raise ValueError("`sparse=True` is not supported with mlx backend")
@@ -68,19 +183,29 @@ def convert_to_tensor(x, dtype=None, sparse=None, ragged=None):
     mlx_dtype = to_mlx_dtype(dtype) if dtype is not None else None
 
     if is_tensor(x):
-        if dtype is None or x.dtype == mlx_dtype:
+        if mlx_dtype is None:
+            mlx_dtype = _CAPPED_MLX_DTYPES.get(x.dtype)
+            if mlx_dtype is None:
+                return x
+        elif x.dtype == mlx_dtype:
             return x
-        return x.astype(mlx_dtype)
+        if x.dtype == mx.float64:
+            # Metal cannot read float64, so cast it on the CPU stream.
+            with mx.stream(mx.cpu):
+                return _astype(x, mlx_dtype)
+        return _astype(x, mlx_dtype)
 
     if isinstance(x, Variable):
         if dtype and standardize_dtype(dtype) != x.dtype:
-            return x.value.astype(mlx_dtype)
+            return _astype(x.value, mlx_dtype)
         return x.value
 
     if isinstance(x, np.ndarray):
-        if x.dtype == np.float64:
-            # mlx backend does not support float64
-            x = x.astype(np.float32)
+        capped = _CAPPED_NUMPY_DTYPES.get(x.dtype)
+        if capped is not None:
+            # Metal cannot load float64, and a cast to float32 first would
+            # round values the dtype can hold. Cast in numpy.
+            x = x.astype(_NUMPY_CAST_DTYPES.get(mlx_dtype, capped))
         # mlx 0.32 raises on negative stride numpy views like img[..., ::-1].
         # Remove once mlx copies them instead.
         if any(stride < 0 for stride in x.strides):
@@ -88,13 +213,13 @@ def convert_to_tensor(x, dtype=None, sparse=None, ragged=None):
         try:
             return mx.array(x, dtype=mlx_dtype)
         except RuntimeError:
-            # mlx raises a bare std::bad_cast. standardize_dtype raises a
+            # mlx raises a bare std::bad_cast. to_mlx_dtype raises a
             # ValueError naming the dtype when it is not supported.
-            standardize_dtype(x.dtype)
+            to_mlx_dtype(x.dtype)
             raise
 
-    if isinstance(x, list):
-        return mx.array(x, dtype=mlx_dtype)
+    if isinstance(x, (list, tuple)):
+        return _list_to_tensor(x, mlx_dtype)
 
     if _is_h5py_dataset(x):
         if h5py is None:
@@ -115,7 +240,21 @@ def convert_to_tensor(x, dtype=None, sparse=None, ragged=None):
         # through numpy so the float64 and bfloat16 handling above applies.
         return convert_to_tensor(np.asarray(x), dtype=dtype)
 
+    if isinstance(x, int) and not isinstance(x, bool):
+        return _python_int_to_tensor(x, mlx_dtype)
     return mx.array(x, dtype=mlx_dtype)
+
+
+def convert_operand(x, dtype):
+    # Like jax, a Python int that fits int32 but not the int dtype wraps into
+    # it. One past int32 raises.
+    if dtype is None or not isinstance(x, int) or isinstance(x, bool):
+        return convert_to_tensor(x, dtype)
+    mlx_dtype = to_mlx_dtype(dtype)
+    if mlx_dtype in _INT_LIMITS and not _int_fits(x, mlx_dtype):
+        _check_python_int(x, mx.int32)
+        x = _wrap_python_int(x, mlx_dtype)
+    return _python_int_to_tensor(x, mlx_dtype)
 
 
 def convert_to_tensors(*xs):
@@ -129,20 +268,20 @@ def convert_to_tensors(*xs):
     if dtype in (mx.float32, mx.float16, mx.bfloat16):
         for i, x in enumerate(xs):
             if ys[i] is None:
-                ys[i] = mx.array(x, dtype=dtype)
+                ys[i] = convert_operand(x, dtype)
     # Bool loses against everything so scalars keep their type
     elif dtype == mx.bool_:
         for i, x in enumerate(xs):
             if ys[i] is None:
-                ys[i] = mx.array(x)
+                ys[i] = convert_to_tensor(x)
     # Integral types keep their type except if the scalar is a float
     else:
         for i, x in enumerate(xs):
             if ys[i] is None:
                 if isinstance(x, float):
-                    ys[i] = mx.array(x)
+                    ys[i] = convert_to_tensor(x)
                 else:
-                    ys[i] = mx.array(x, dtype=dtype)
+                    ys[i] = convert_operand(x, dtype)
 
     return ys
 
@@ -173,15 +312,27 @@ def cast(x, dtype):
 def promote_to_float(x, *others):
     # With several operands they promote together, as jax does for mixed
     # inputs, and a tuple comes back.
+    x = convert_to_tensor(x)
     if others:
+        others = [convert_to_tensor(o) for o in others]
         dtype = result_type(x.dtype, *[o.dtype for o in others])
         float_dtype = dtypes.promote_to_float_dtype(dtype)
         return tuple(cast(t, float_dtype) for t in (x, *others))
+    if mx.issubdtype(x.dtype, mx.inexact):
+        return x
     return cast(x, dtypes.promote_to_float_dtype(x.dtype))
 
 
+def lapack_float(x):
+    # The mlx lapack kernels reject the half precision types, so compute those
+    # in float32. Returns the compute input and the dtype to cast back to.
+    if x.dtype in (mx.bfloat16, mx.float16):
+        return x.astype(mx.float32), x.dtype
+    return x, x.dtype
+
+
 def int_dtype_of_size(dtype):
-    return {2: mx.int16, 4: mx.int32, 8: mx.int64}[dtype.size]
+    return {2: mx.int16, 4: mx.int32}[dtype.size]
 
 
 # Shape / dtype inference util
@@ -200,10 +351,7 @@ def compute_output_spec(fn, *args, **kwargs):
                 for i, e in enumerate(shape):
                     if e is None:
                         shape[i] = fill_value
-            # mlx has no GPU float64, and eager convert_to_tensor downcasts it
-            # to float32, so mirror that here for shape/dtype inference.
-            dtype = "float32" if x.dtype == "float64" else x.dtype
-            return mx.ones(shape, dtype=MLX_DTYPES[dtype])
+            return mx.ones(shape, dtype=MLX_DTYPES[x.dtype])
         return x
 
     def convert_mlx_to_keras_tensor(x):
@@ -246,7 +394,11 @@ def compute_output_spec(fn, *args, **kwargs):
     return output_spec
 
 
-def _run_all_branches(branches, select):
+def _run_all_branches(
+    branches,
+    select,
+    mismatch="All branches should return outputs of the same kind",
+):
     # MLX has no primitive for data-dependent control flow, so every branch
     # is evaluated and `select` picks between their outputs.
     scope = get_stateless_scope()
@@ -282,8 +434,7 @@ def _run_all_branches(branches, select):
         dtypes = {dtype for _, dtype in specs if dtype is not None}
         if len(shapes) > 1 or len(dtypes) > 1:
             raise ValueError(
-                "All branches should return outputs of the same kind "
-                f"(struct, dtype and shape). Got {specs} instead."
+                f"{mismatch} (struct, dtype and shape). Got {specs} instead."
             )
         return select(*values)
 
@@ -314,9 +465,9 @@ def vectorized_map(function, elements):
     return mx.vmap(function)(elements)
 
 
-# GPU scatter does not yet support int64, uint64, or complex64 for the
-# input or updates, so those dtypes are scattered on the CPU stream.
-_SCATTER_UNSUPPORTED_GPU_DTYPES = (mx.int64, mx.uint64, mx.complex64)
+# GPU scatter does not yet support complex64 for the input or updates, so
+# it is scattered on the CPU stream.
+_SCATTER_UNSUPPORTED_GPU_DTYPES = (mx.complex64,)
 
 
 def scatter(indices, values, shape):
@@ -474,6 +625,63 @@ def switch(index, branches, *operands):
     )
 
 
+class UnboundedLoopError(ValueError):
+    """A traced `while_loop` has no bound to unroll. The trainer catches it."""
+
+
+@mx.custom_function
+def _stop_gradient_unless(pred, x):
+    return x
+
+
+@_stop_gradient_unless.vjp
+def _stop_gradient_unless_vjp(primals, cotangent, output):
+    # A stopped iteration can leave the domain of `body`, and the vjp of
+    # `mx.where` lets that nan through.
+    pred, _ = primals
+    return mx.zeros_like(pred), mx.where(
+        pred, cotangent, mx.zeros_like(cotangent)
+    )
+
+
+def _run_masked_iterations(cond, body, loop_vars, pred, iterations):
+    # MLX has no loop primitive, so every iteration runs and the loop
+    # variables stop changing once `pred` turns false.
+    def step():
+        # Guard what `body` reads, the loop and the scope variables.
+        inputs = tree.map_structure(
+            lambda v: _stop_gradient_unless(pred, v), loop_vars
+        )
+        scope = get_stateless_scope()
+        state = {} if scope is None else dict(scope.state_mapping)
+        guarded = {
+            key: _stop_gradient_unless(pred, value)
+            for key, value in state.items()
+            if isinstance(value, mx.array)
+            and mx.issubdtype(value.dtype, mx.inexact)
+        }
+        if guarded:
+            scope.state_mapping.update(guarded)
+        outputs = body(*inputs)
+        for key, value in guarded.items():
+            # Keep what `body` assigned.
+            if scope.state_mapping[key] is value:
+                scope.state_mapping[key] = state[key]
+        if not isinstance(outputs, (list, tuple)):
+            outputs = (outputs,)
+        return tree.pack_sequence_as(loop_vars, tree.flatten(outputs))
+
+    for i in range(iterations):
+        loop_vars = _run_all_branches(
+            (step, lambda: loop_vars),
+            lambda new, old: mx.where(pred, new, old),
+            "`body` should return values of the same kind as `loop_vars`",
+        )
+        if i + 1 < iterations:
+            pred = mx.logical_and(pred, mx.reshape(cond(*loop_vars), ()))
+    return loop_vars
+
+
 def while_loop(
     cond,
     body,
@@ -491,7 +699,31 @@ def while_loop(
     is_tuple = isinstance(loop_vars, (tuple, list))
     loop_vars = tuple(loop_vars) if is_tuple else (loop_vars,)
     loop_vars = tree.map_structure(convert_to_tensor, loop_vars)
-    while iteration_check(current_iter) and cond(*loop_vars):
+    while iteration_check(current_iter):
+        pred = cond(*loop_vars)
+        try:
+            pred_value = bool(pred)
+        except ValueError as e:
+            # bool() of one element only fails under `mx.compile` or
+            # `mx.vmap`.
+            if not isinstance(pred, mx.array) or pred.size != 1:
+                raise
+            if maximum_iterations is None:
+                raise UnboundedLoopError(
+                    "A `while_loop` with a condition that depends on the "
+                    "data needs `maximum_iterations` when it is traced by "
+                    "`mx.compile` or `mx.vmap`."
+                ) from e
+            loop_vars = _run_masked_iterations(
+                cond,
+                body,
+                loop_vars,
+                mx.reshape(pred, ()),
+                maximum_iterations - current_iter,
+            )
+            break
+        if not pred_value:
+            break
         loop_vars = body(*loop_vars)
         if not isinstance(loop_vars, (list, tuple)):
             loop_vars = (loop_vars,)
@@ -515,9 +747,7 @@ def fori_loop(lower, upper, body_fun, init_val):
 
 
 def stop_gradient(variable):
-    if isinstance(variable, Variable):
-        variable = variable.value
-    return mx.stop_gradient(variable)
+    return mx.stop_gradient(convert_to_tensor(variable))
 
 
 @mx.custom_function
@@ -546,6 +776,7 @@ def random_seed_dtype():
 
 
 def reverse_sequence(xs, axis=0):
+    xs = convert_to_tensor(xs)
     indices = mx.arange(xs.shape[axis] - 1, -1, -1)
     return mx.take(xs, indices, axis=axis)
 
@@ -792,6 +1023,12 @@ def remat(f):
     return f
 
 
+def _numpy_leaves_to_tensors(x):
+    return tree.map_structure(
+        lambda t: convert_to_tensor(t) if isinstance(t, np.ndarray) else t, x
+    )
+
+
 def grad(f, argnums=0):
     def scalar_f(*args, **kwargs):
         # A gradient tape sums a non scalar output, so do the same here.
@@ -799,7 +1036,9 @@ def grad(f, argnums=0):
 
     def grad_fn(*args, **kwargs):
         positions = standardize_argnums(argnums, len(args))
-        args = list(args)
+        # A numpy array on the left of an mx.array op drops the trace.
+        args = [_numpy_leaves_to_tensors(arg) for arg in args]
+        kwargs = {k: _numpy_leaves_to_tensors(v) for k, v in kwargs.items()}
         for i in positions:
             args[i] = tree.map_structure(convert_to_tensor, args[i])
         grads = mx.grad(scalar_f, argnums=positions)(*args, **kwargs)

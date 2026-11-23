@@ -7,8 +7,8 @@ import numpy as np
 
 from keras.src.backend.common import is_float_dtype
 from keras.src.backend.common import result_type
+from keras.src.backend.common import standardize_data_format
 from keras.src.backend.common import standardize_dtype
-from keras.src.backend.config import standardize_data_format
 from keras_mlx.src.ops.core import convert_to_tensor
 from keras_mlx.src.ops.core import to_mlx_dtype
 from keras_mlx.src.random import mlx_draw_seed
@@ -177,7 +177,7 @@ def _nearest_indices_and_weights(coordinate):
         if _is_integer(coordinate)
         else _round_half_away_from_zero(coordinate)
     )
-    index = coordinate.astype(mx.int32)
+    index = convert_to_tensor(coordinate, dtype="int32")
     return [(index, 1)]
 
 
@@ -185,7 +185,7 @@ def _linear_indices_and_weights(coordinate):
     lower = mx.floor(coordinate)
     upper_weight = coordinate - lower
     lower_weight = 1 - upper_weight
-    index = lower.astype(mx.int32)
+    index = convert_to_tensor(lower, dtype="int32")
     return [(index, lower_weight), (index + 1, upper_weight)]
 
 
@@ -361,6 +361,14 @@ def affine_transform(
             f"Received: transform.shape={transform.shape}"
         )
 
+    batch_size = images.shape[0] if len(images.shape) == 4 else 1
+    if len(transform.shape) == 2 and transform.shape[0] not in (1, batch_size):
+        raise ValueError(
+            "Invalid transform shape: expected one transform or one per "
+            f"image. Received: images.shape={images.shape}, "
+            f"transform.shape={transform.shape}"
+        )
+
     # unbatched case
     need_squeeze = False
     if len(images.shape) == 3:
@@ -372,8 +380,6 @@ def affine_transform(
     if data_format == "channels_first":
         images = mx.transpose(images, (0, 2, 3, 1))
 
-    batch_size = images.shape[0]
-
     # get indices
     meshgrid = mx.meshgrid(
         *[mx.arange(size) for size in images.shape[1:]], indexing="ij"
@@ -381,7 +387,6 @@ def affine_transform(
     indices = mx.concatenate(
         [mx.expand_dims(x, axis=-1) for x in meshgrid], axis=-1
     )
-    indices = mx.tile(indices, (batch_size, 1, 1, 1, 1))
 
     # Swap the values on a copy so the caller's transform is left untouched.
     a0 = transform[:, 0]
@@ -396,13 +401,14 @@ def affine_transform(
 
     # deal with transform
     transform = mx.pad(transform, pad_width=[[0, 0], [0, 1]], constant_values=1)
-    transform = mx.reshape(transform, (batch_size, 3, 3))
+    transform = mx.reshape(transform, (-1, 3, 3))
     offset = transform[:, 0:2, 2]
     offset = mx.pad(offset, pad_width=[[0, 0], [0, 1]])
     transform[:, 0:2, 2] = 0
 
     # transform the indices
-    coordinates = mx.einsum("Bhwij, Bjk -> Bhwik", indices, transform)
+    # A single transform keeps a batch of 1 and broadcasts over the images.
+    coordinates = mx.einsum("hwij, Bjk -> Bhwik", indices, transform)
     coordinates = mx.moveaxis(coordinates, source=-1, destination=1)
     coordinates += offset.reshape((*offset.shape, 1, 1, 1))
 
@@ -436,10 +442,17 @@ def _resize_nearest(x, output_shape):
     for d in spatial_dims:
         m = input_shape[d]
         n = output_shape[d]
-        offsets = (mx.arange(n, dtype=mx.float32) + 0.5) * m / n
-        offsets = mx.floor(offsets.astype(mx.float32)).astype(mx.int32)
+        # A repeat or strided slice avoids the gather for integer factors.
+        if m and n % m == 0:
+            x = mx.repeat(x, n // m, axis=d)
+            continue
         indices = [slice(None)] * len(input_shape)
-        indices[d] = offsets
+        if m and m % n == 0:
+            indices[d] = slice(m // n // 2, None, m // n)
+        else:
+            offsets = (mx.arange(n, dtype=mx.float32) + 0.5) * m / n
+            offsets = mx.floor(offsets.astype(mx.float32)).astype(mx.int32)
+            indices[d] = offsets
         x = x[tuple(indices)]
     return x
 
@@ -455,11 +468,7 @@ def _fill_lanczos_kernel(radius, x):
 
 
 def _fill_keys_cubic_kernel(x):
-    # Ref: jax.image.resize
-    # http://ieeexplore.ieee.org/document/1163711/
-    # R. G. Keys. Cubic convolution interpolation for digital image processing.
-    # IEEE Transactions on Acoustics, Speech, and Signal Processing,
-    # 29(6):1153–1160, 1981.
+    # Ref: jax.image.resize, Keys cubic convolution (IEEE TASSP 1981).
     out = ((1.5 * x - 2.5) * x) * x + 1.0
     out = mx.where(x >= 1.0, ((-0.5 * x + 2.5) * x - 4.0) * x + 2.0, out)
     return mx.where(x >= 2.0, 0.0, out)

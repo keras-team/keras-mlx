@@ -2,9 +2,9 @@ import mlx.core as mx
 import numpy as np
 
 from keras.src import tree
-from keras.src.backend.common import result_type
 from keras.src.backend.common import standardize_dtype
 from keras_mlx.src.ops.core import convert_to_tensor
+from keras_mlx.src.ops.core import lapack_float
 from keras_mlx.src.ops.core import promote_to_float
 
 
@@ -23,6 +23,29 @@ def _det_3x3(a):
     )
 
 
+@mx.custom_function
+def _eigvals_det(a):
+    # The eigenvalue product handles singular matrices naturally.
+    with mx.stream(mx.cpu):
+        w = mx.linalg.eigvals(a)
+    return mx.real(mx.prod(w, axis=-1))
+
+
+@_eigvals_det.vjp
+def _eigvals_det_vjp(primals, cotangent, output):
+    # eigvals has no vjp. The gradient is the transposed adjugate, built from
+    # the svd so it stays finite for singular matrices.
+    with mx.stream(mx.cpu):
+        u, s, vt = mx.linalg.svd(primals)
+    # The singular values drop the sign, which is det(u @ vt).
+    sign = _eigvals_det(mx.matmul(u, vt))
+    others = mx.cumprod(s, axis=-1, inclusive=False) * mx.cumprod(
+        s, axis=-1, reverse=True, inclusive=False
+    )
+    adjugate_t = mx.matmul(u * others[..., None, :], vt)
+    return (cotangent * sign)[..., None, None] * adjugate_t
+
+
 def det(a):
     a = convert_to_tensor(a)
     # Promote integer and bool inputs to float, matching jax and so the 2x2
@@ -33,15 +56,8 @@ def det(a):
         return _det_2x2(a)
     elif len(a_shape) >= 2 and a_shape[-1] == 3 and a_shape[-2] == 3:
         return _det_3x3(a)
-    # The mlx lapack kernels take float32 and float64 but reject the half
-    # precision types, so compute those in float32 and cast back.
-    target = a.dtype
-    if a.dtype in (mx.bfloat16, mx.float16):
-        a = a.astype(mx.float32)
-    # The eigenvalue product handles singular matrices naturally.
-    with mx.stream(mx.cpu):
-        w = mx.linalg.eigvals(a)
-    return mx.real(mx.prod(w, axis=-1)).astype(target)
+    a, target = lapack_float(a)
+    return _eigvals_det(a).astype(target)
 
 
 def eig(a):
@@ -75,8 +91,7 @@ def solve(a, b):
     if vector_rhs:
         b = mx.expand_dims(b, axis=-1)
     with mx.stream(mx.cpu):
-        # [linalg::solve] This op is not yet supported on the GPU.
-        # Explicitly pass a CPU stream to run it.
+        # This op is not yet supported on the GPU.
         x = mx.linalg.solve(a, b)
     return mx.squeeze(x, axis=-1) if vector_rhs else x
 
@@ -139,10 +154,8 @@ def cholesky(a, upper=False):
     a = promote_to_float(a)
     with mx.stream(mx.cpu):
         out = mx.linalg.cholesky(a, upper=upper)
-    # Match numpy and jax and surface a non positive definite input as an
-    # error. A real factor has a strictly positive diagonal, and mlx returns
-    # a negative one rather than nan for most such inputs. The comparison
-    # also catches nan, since nan > 0 is false.
+    # Raise for a non positive definite input like numpy and jax. mlx returns a
+    # negative diagonal rather than nan, so require > 0, which also catches nan.
     diagonal = mx.diagonal(out, axis1=-2, axis2=-1)
     try:
         positive = bool(mx.all(diagonal > 0))
@@ -158,15 +171,8 @@ def cholesky(a, upper=False):
 
 
 def norm(x, ord=None, axis=None, keepdims=False):
-    dtype = standardize_dtype(x.dtype)
-    if "int" in dtype or dtype == "bool":
-        dtype = result_type(x.dtype, "float32")
-    x = convert_to_tensor(x, dtype=dtype)
-    # mlx linalg kernels do not support half precision, compute in float32 and
-    # cast back to the input dtype.
-    result_dtype = x.dtype
-    if x.dtype in (mx.bfloat16, mx.float16):
-        x = x.astype(mx.float32)
+    x = promote_to_float(x)
+    x, result_dtype = lapack_float(x)
     # Singular value matrix norms are svd-based, which is CPU-only in mlx.
     if isinstance(axis, (tuple, list)):
         is_matrix_norm = True
@@ -184,10 +190,6 @@ def norm(x, ord=None, axis=None, keepdims=False):
         # Match the other backends, which raise a ValueError for an invalid
         # axis instead of mlx's IndexError.
         raise ValueError(str(e)) from e
-    if keepdims and axis is None and output.ndim != x.ndim:
-        # mlx flattens the input when axis is None and ord is None, losing
-        # the dimensions that numpy keeps with keepdims.
-        output = output.reshape((1,) * x.ndim)
     return output.astype(result_dtype)
 
 
@@ -269,12 +271,7 @@ def matrix_power(a, n):
 def pinv(x, rcond=None):
     x = convert_to_tensor(x)
     # Ints and bools are not accepted by the mlx kernels, so promote like jax.
-    x = promote_to_float(x)
-    target = x.dtype
-    # The mlx lapack kernels reject the half precision types, so compute
-    # those in float32 and cast back.
-    if x.dtype in (mx.bfloat16, mx.float16):
-        x = x.astype(mx.float32)
+    x, target = lapack_float(promote_to_float(x))
     if rcond is None:
         with mx.stream(mx.cpu):
             return mx.linalg.pinv(x).astype(target)
@@ -298,16 +295,11 @@ def matrix_rank(x, tol=None):
     # Promote integer and bool inputs to float, matching jax.
     x = promote_to_float(x)
     std = standardize_dtype(x.dtype)
-    # The mlx svd kernel rejects the half precision types, so those compute
-    # in float32. float64 goes through as is.
-    if x.dtype in (mx.bfloat16, mx.float16):
-        x = x.astype(mx.float32)
+    x, _ = lapack_float(x)
     s = svd(x, compute_uv=False)
     if tol is None:
-        # eps of the INPUT dtype, not the compute one. Widening a half
-        # precision input to float32 adds no information, so a float32 eps
-        # would put the cutoff far below the noise the data actually carries
-        # and count that noise as rank.
+        # eps of the INPUT dtype, not the compute one. A float32 eps would put
+        # the cutoff for a widened half input far below the data's noise.
         eps = np.finfo(std).eps
         tol = mx.max(s, axis=-1, keepdims=True) * max(x.shape[-2:]) * eps
     return mx.sum(s > tol, axis=-1).astype(mx.int32)
@@ -329,10 +321,8 @@ def jvp(fun, primals, tangents, has_aux=False):
     primals = list(primals)
     tangents = list(tangents)
 
-    # mx.jvp has no has_aux and returns flat lists, so strip the aux output
-    # before differentiating and record the output structure, both from the
-    # single call `mx.jvp` makes internally rather than a second concrete
-    # call to `fun`.
+    # mx.jvp has no has_aux, so strip the aux output before differentiating and
+    # record the output structure from the single call mx.jvp makes internally.
     structure_holder = [None]
     if has_aux:
         aux_holder = [None]

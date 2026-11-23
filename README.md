@@ -1,5 +1,13 @@
 # MLX backend implementation for Keras
 
+## Dtypes
+
+64-bit dtypes are capped to 32 bits on CPU and on Metal, like the JAX backend
+with x64 off, so `int64` gives `int32` and `float64` gives `float32`.
+`convert_to_tensor` raises `OverflowError` for a Python int that does not fit
+the dtype. In ops on integer arrays, a Python int outside the int32 range
+raises the same error, and one inside it wraps into the array dtype.
+
 ## Local development
 
 For development, you need the `keras` repository and the `keras-mlx`
