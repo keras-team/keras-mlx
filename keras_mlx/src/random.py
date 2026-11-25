@@ -21,6 +21,11 @@ GAMMA_ROUNDS = 24
 _TRACING_COMPILED_STEP = "mlx_tracing_compiled_step"
 
 
+def seed_dtype():
+    # mlx random seed uses uint32.
+    return "uint32"
+
+
 @contextlib.contextmanager
 def tracing_compiled_step():
     previous = global_state.get_global_attribute(_TRACING_COMPILED_STEP)
