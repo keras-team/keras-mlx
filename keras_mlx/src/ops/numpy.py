@@ -162,8 +162,7 @@ def _empty_extremum(x, axis, keepdims, initial, name):
     if needs_initial and initial is None:
         raise ValueError(f"Cannot compute the {name} of an empty tensor.")
     fill = initial if needs_initial else 0
-    # mx.full mishandles dtype=bool with an int fill.
-    return mx.full(out_shape, fill).astype(x.dtype)
+    return mx.full(out_shape, fill, dtype=x.dtype)
 
 
 def max(x, axis=None, keepdims=False, initial=None):
@@ -212,18 +211,11 @@ def abs(x):
 
 def all(x, axis=None, keepdims=False):
     x = convert_to_tensor(x)
-    if x.dtype in (mx.int8, mx.uint8):
-        # The Metal reduce treats 1 byte ints as bool.
-        x = x != 0
     return mx.all(x, axis=axis, keepdims=keepdims)
 
 
 def any(x, axis=None, keepdims=False):
     x = convert_to_tensor(x)
-    if x.dtype in (mx.int8, mx.uint8):
-        # The Metal reduce treats 1 byte ints as bool, so values like 2 are
-        # lost. Remove once mlx fixes it.
-        x = x != 0
     return mx.any(x, axis=axis, keepdims=keepdims)
 
 
@@ -292,8 +284,6 @@ def arctanh(x):
 
 def argmax(x, axis=None, keepdims=False):
     x = convert_to_tensor(x)
-    # mlx errors on keepdims with a 0-d input, jax returns a 0-d index.
-    keepdims = keepdims and x.ndim > 0
     # mlx rejects empty input, but jax returns an empty result here.
     empty_shape = _empty_result_shape(x, axis, keepdims)
     if empty_shape is not None:
@@ -306,7 +296,6 @@ def argmax(x, axis=None, keepdims=False):
 
 def argmin(x, axis=None, keepdims=False):
     x = convert_to_tensor(x)
-    keepdims = keepdims and x.ndim > 0
     empty_shape = _empty_result_shape(x, axis, keepdims)
     if empty_shape is not None:
         return mx.zeros(empty_shape, mx.int32)
@@ -318,18 +307,12 @@ def argmin(x, axis=None, keepdims=False):
 def argsort(x, axis=-1):
     x = convert_to_tensor(x)
     axis = None if x.ndim == 0 else axis
-    # Metal has no bool sort kernel, sort bool keys as int8.
-    if x.dtype == mx.bool_:
-        x = x.astype(mx.int8)
     # cast to int32 to align with other backends
     return mx.stop_gradient(mx.argsort(x, axis=axis)).astype(mx.int32)
 
 
 def argpartition(x, kth, axis=-1):
     x = convert_to_tensor(x)
-    # Metal has no bool partition kernel, partition bool keys as int8.
-    if x.dtype == mx.bool_:
-        x = x.astype(mx.int8)
     # cast to int32 to align with other backends
     indices = mx.argpartition(x, kth, axis)
     return mx.stop_gradient(indices).astype(mx.int32)
@@ -673,10 +656,7 @@ def expand_dims(x, axis):
 
 def expm1(x):
     x = promote_to_float(x)
-    # Metal's expm1 is inexact away from zero and exp(x) - 1 cancels near it.
-    # Masking the unused expm1 input keeps its overflow out of the gradient.
-    small = mx.abs(x) < 0.1
-    return mx.where(small, mx.expm1(mx.where(small, x, 0)), mx.exp(x) - 1)
+    return mx.expm1(x)
 
 
 def flip(x, axis=None):
@@ -787,34 +767,37 @@ def linspace(
     if dtype is None:
         dtype = result_type(start.dtype, stop.dtype, float)
     mlx_dtype = to_mlx_dtype(dtype)
-
-    # mx.linspace takes Python scalars and a plain int for num.
     num = int(num)
-    if start.ndim == 0 and stop.ndim == 0:
-        result = mx.linspace(
-            start.item(),
-            stop.item(),
-            num=num if endpoint else num + 1,
-            dtype=mlx_dtype,
+    if num < 0:
+        raise ValueError(
+            f"`num` must be a non-negative integer. Received: num={num}"
         )
+    real_dtype = mx.float64 if mlx_dtype == mx.float64 else mx.float32
+    if mx.issubdtype(mlx_dtype, mx.complexfloating):
+        inner_dtype = mx.complex64
     else:
-        start = start.astype(mlx_dtype)
-        stop = stop.astype(mlx_dtype)
-        zero_one = mx.linspace(
-            0, 1, num=num if endpoint else num + 1, dtype=mlx_dtype
-        )
-        zero_one = zero_one.reshape([-1] + [1] * start.ndim)
-        result = zero_one * (stop - start)[None] + start[None]
+        inner_dtype = real_dtype
 
-    if not endpoint:
-        result = result[:-1]
+    # mx.linspace's formula, exact at both ends. mx.linspace itself takes
+    # only Python scalars, so traced bounds can't call it.
+    start = start.astype(inner_dtype)
+    stop = stop.astype(inner_dtype)
+    divisor = num - 1 if endpoint else num
+    t = mx.arange(num, dtype=real_dtype) / builtins.max(divisor, 1)
+    t = t.reshape([-1] + [1] * builtins.max(start.ndim, stop.ndim))
+    result = (1 - t) * start + t * stop
+    if mx.issubdtype(mlx_dtype, mx.integer):
+        # numpy floors for integer dtypes.
+        result = mx.floor(result)
+    result = result.astype(mlx_dtype)
 
     if axis != 0:
         # The samples are generated along axis 0, numpy places them at `axis`.
         result = mx.moveaxis(result, 0, axis)
 
     if retstep:
-        step = (stop - start) / (num - 1 if endpoint else num)
+        # numpy gives nan for fewer than two samples.
+        step = (stop - start) / (divisor if divisor > 0 else math.nan)
         return result, step
 
     return result
@@ -1293,9 +1276,6 @@ def size(x):
 
 def sort(x, axis=-1):
     x = convert_to_tensor(x)
-    # Metal has no bool sort kernel, sort bool values as int8.
-    if x.dtype == mx.bool_:
-        return mx.sort(x.astype(mx.int8), axis=axis).astype(mx.bool_)
     return mx.sort(x, axis=axis)
 
 
@@ -2590,7 +2570,6 @@ def _unique_sized(
     x, size, return_index, return_inverse, return_counts, fill_value
 ):
     # Asking for at least x.size entries keeps the inverse untruncated.
-    stream = mx.cpu if x.dtype == mx.bool_ else mx.default_device()
     outputs = mx.unique(
         x,
         size=builtins.max(size, x.size),
@@ -2598,7 +2577,6 @@ def _unique_sized(
         return_inverse=return_inverse,
         return_counts=return_counts,
         fill_value=fill_value,
-        stream=stream,
     )
     if not isinstance(outputs, tuple):
         return outputs[:size]
