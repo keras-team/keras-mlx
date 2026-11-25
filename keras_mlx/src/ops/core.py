@@ -770,14 +770,6 @@ def unstack(x, num=None, axis=0):
     return list(_unstack_leading(x))
 
 
-# For backwards compatibility, will be removed
-# https://github.com/keras-team/keras/issues/24352
-def random_seed_dtype():
-    from keras_mlx.src.random import seed_dtype
-
-    return seed_dtype()
-
-
 def reverse_sequence(xs, axis=0):
     xs = convert_to_tensor(xs)
     indices = mx.arange(xs.shape[axis] - 1, -1, -1)
