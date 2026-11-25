@@ -787,34 +787,37 @@ def linspace(
     if dtype is None:
         dtype = result_type(start.dtype, stop.dtype, float)
     mlx_dtype = to_mlx_dtype(dtype)
-
-    # mx.linspace takes Python scalars and a plain int for num.
     num = int(num)
-    if start.ndim == 0 and stop.ndim == 0:
-        result = mx.linspace(
-            start.item(),
-            stop.item(),
-            num=num if endpoint else num + 1,
-            dtype=mlx_dtype,
+    if num < 0:
+        raise ValueError(
+            f"`num` must be a non-negative integer. Received: num={num}"
         )
+    real_dtype = mx.float64 if mlx_dtype == mx.float64 else mx.float32
+    if mx.issubdtype(mlx_dtype, mx.complexfloating):
+        inner_dtype = mx.complex64
     else:
-        start = start.astype(mlx_dtype)
-        stop = stop.astype(mlx_dtype)
-        zero_one = mx.linspace(
-            0, 1, num=num if endpoint else num + 1, dtype=mlx_dtype
-        )
-        zero_one = zero_one.reshape([-1] + [1] * start.ndim)
-        result = zero_one * (stop - start)[None] + start[None]
+        inner_dtype = real_dtype
 
-    if not endpoint:
-        result = result[:-1]
+    # mx.linspace's formula, exact at both ends. mx.linspace itself takes
+    # only Python scalars, so traced bounds can't call it.
+    start = start.astype(inner_dtype)
+    stop = stop.astype(inner_dtype)
+    divisor = num - 1 if endpoint else num
+    t = mx.arange(num, dtype=real_dtype) / builtins.max(divisor, 1)
+    t = t.reshape([-1] + [1] * builtins.max(start.ndim, stop.ndim))
+    result = (1 - t) * start + t * stop
+    if mx.issubdtype(mlx_dtype, mx.integer):
+        # numpy floors for integer dtypes.
+        result = mx.floor(result)
+    result = result.astype(mlx_dtype)
 
     if axis != 0:
         # The samples are generated along axis 0, numpy places them at `axis`.
         result = mx.moveaxis(result, 0, axis)
 
     if retstep:
-        step = (stop - start) / (num - 1 if endpoint else num)
+        # numpy gives nan for fewer than two samples.
+        step = (stop - start) / (divisor if divisor > 0 else math.nan)
         return result, step
 
     return result

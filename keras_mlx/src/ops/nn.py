@@ -67,7 +67,7 @@ def relu6(x):
 
 
 def sigmoid(x):
-    x = convert_to_tensor(x)
+    x = promote_to_float(x)
     return mx.sigmoid(x)
 
 
