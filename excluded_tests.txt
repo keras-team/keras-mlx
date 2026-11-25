@@ -37,9 +37,6 @@ keras/src/losses/losses_test.py::SparseCategoricalFocalCrossentropyTest::test_ou
 keras/src/models/model_test.py::ModelTest::test_quantize_float8
 keras/src/ops/core_test.py::CoreOpsCorrectnessTest::test_cast_float8_float8_e4m3fn
 keras/src/ops/core_test.py::CoreOpsCorrectnessTest::test_cast_float8_float8_e5m2
-# mlx 0.32.4 on Metal misorders a reshape after transposing some 3D conv
-# outputs. Remove once an mlx release fixes the reshape contiguity flags.
-keras/src/ops/image_test.py::ImageOpsCorrectnessTest::test_reconstruct_patches_3d
 # keras expects float64 from resize and exempts jax only.
 keras/src/ops/image_test.py::ImageOpsCorrectnessTest::test_resize_dtype_bicubic_false_float64
 keras/src/ops/image_test.py::ImageOpsCorrectnessTest::test_resize_dtype_bicubic_true_float64

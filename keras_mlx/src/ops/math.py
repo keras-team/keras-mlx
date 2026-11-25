@@ -530,17 +530,17 @@ def istft(
 
 
 def rsqrt(x):
-    x = convert_to_tensor(x)
+    x = promote_to_float(x)
     return mx.rsqrt(x)
 
 
 def erf(x):
-    x = convert_to_tensor(x)
+    x = promote_to_float(x)
     return mx.erf(x)
 
 
 def erfinv(x):
-    x = convert_to_tensor(x)
+    x = promote_to_float(x)
     return mx.erfinv(x)
 
 
