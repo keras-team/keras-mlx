@@ -163,8 +163,6 @@ def elu(x, alpha=1.0):
     # exp branch like jax.
     xneg = mx.minimum(0, x)
     xpos = mx.maximum(x, 0)
-    # mx.expm1 is within ~35 ulp on Metal for x <= 0. The expm1 op is tighter
-    # but its select doubles the eager and grad time.
     return alpha * mx.expm1(xneg) + xpos
 
 
@@ -759,9 +757,7 @@ def sparse_categorical_crossentropy(target, output, from_logits=False, axis=-1):
         and output.dtype in (mx.float16, mx.bfloat16, mx.float32)
         and output.size > 0
     ):
-        # Up to mlx 0.32.4 its Metal gradient is wrong for logits that are
-        # not row contiguous.
-        loss = mx.fast.cross_entropy(mx.contiguous(output), target)
+        loss = mx.fast.cross_entropy(output, target)
         return mx.where(valid, loss, 0).astype(output.dtype)
 
     if from_logits:
