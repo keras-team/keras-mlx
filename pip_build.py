@@ -53,94 +53,6 @@ def read_version(version_path):
     raise ValueError(f"Could not find __version__ in {version_path}")
 
 
-_KERAS_DEP_RE = re.compile(
-    r"^keras\s*(\[[^\]]*\])?(?:\s*[<>=!~][^;]*)?(\s*;.*)?$"
-)
-
-
-def _find_dependencies_span(pyproj_str):
-    """Return `(start, end)` of the `dependencies = [...]` body."""
-    match = re.search(r"^dependencies\s*=\s*\[", pyproj_str, re.MULTILINE)
-    if not match:
-        raise ValueError("Could not locate `dependencies` in pyproject.toml")
-    start = match.end()
-    depth = 1
-    in_quote = None
-    in_comment = False
-    i = start
-    while i < len(pyproj_str):
-        ch = pyproj_str[i]
-        if in_comment:
-            if ch == "\n":
-                in_comment = False
-        elif in_quote:
-            if ch == "\\" and in_quote == '"':
-                i += 1
-            elif ch == in_quote:
-                in_quote = None
-        elif ch == "#":
-            in_comment = True
-        elif ch in ('"', "'"):
-            in_quote = ch
-        elif ch == "[":
-            depth += 1
-        elif ch == "]":
-            depth -= 1
-            if depth == 0:
-                return start, i
-        i += 1
-    raise ValueError("Unterminated `dependencies` in pyproject.toml")
-
-
-def _rewrite_keras_dependency(body):
-    """Replace the `"keras"` dependency inside a TOML list body."""
-    parts = []
-    last = 0
-    in_comment = False
-    i = 0
-    replacements = 0
-    while i < len(body):
-        ch = body[i]
-        if in_comment:
-            if ch == "\n":
-                in_comment = False
-            i += 1
-            continue
-        if ch == "#":
-            in_comment = True
-            i += 1
-            continue
-        if ch in ('"', "'"):
-            quote = ch
-            str_start = i + 1
-            i += 1
-            while i < len(body):
-                if body[i] == "\\" and quote == '"':
-                    i += 2
-                    continue
-                if body[i] == quote:
-                    break
-                i += 1
-            if i >= len(body):
-                raise ValueError("Unterminated string in `dependencies`")
-            dep_str = body[str_start:i]
-            dep_match = _KERAS_DEP_RE.match(dep_str)
-            if dep_match:
-                extras, marker = dep_match.groups()
-                new_dep = f"keras-nightly{extras or ''}{marker or ''}"
-                parts.append(body[last:str_start])
-                parts.append(new_dep)
-                last = i
-                replacements += 1
-            i += 1
-            continue
-        i += 1
-    if replacements != 1:
-        raise ValueError("Could not rewrite `keras` dependency for nightly")
-    parts.append(body[last:])
-    return "".join(parts)
-
-
 def _rewrite_nightly_pyproject(build_path, pkg_name):
     """Switch package name and `keras` dependency to nightly variants."""
     nightly_name = f"{pkg_name}-nightly"
@@ -151,46 +63,40 @@ def _rewrite_nightly_pyproject(build_path, pkg_name):
         rf'^name\s*=\s*"{re.escape(pkg_name)}"',
         f'name = "{nightly_name}"',
         pyproj_str,
-        count=1,
         flags=re.MULTILINE,
     )
     if name_subs != 1:
         raise ValueError(f"Could not rewrite package name for {pkg_name}")
 
-    start, end = _find_dependencies_span(pyproj_str)
-    updated_body = _rewrite_keras_dependency(pyproj_str[start:end])
-    pyproj_str = pyproj_str[:start] + updated_body + pyproj_str[end:]
+    pyproj_str, dep_subs = re.subn(
+        r'^([ \t]+)(["\'])keras\2,([ \t]*(?:#.*)?)$',
+        r"\1\2keras-nightly\2,\3",
+        pyproj_str,
+        flags=re.MULTILINE,
+    )
+    if dep_subs != 1:
+        raise ValueError("Could not rewrite `keras` dependency for nightly")
 
     pyproj_path.write_text(pyproj_str)
     return nightly_name
 
 
-def export_version_string(build_path, version, is_nightly=False, rc_index=None):
+def export_version_string(build_path, version, is_nightly=False):
     """Export version string and nightly package metadata in `build_path`."""
-    if is_nightly and rc_index is not None:
-        raise ValueError("Cannot specify both `--nightly` and `--rc`")
-    if rc_index is not None and rc_index < 0:
-        raise ValueError(f"`--rc` must be non-negative, got {rc_index}")
-
     dist_pkg_name = package_name
-    if is_nightly or rc_index is not None:
+    if is_nightly:
         match = re.match(r"^([0-9]+\.[0-9]+\.[0-9]+)", version)
         if not match:
             raise ValueError(f"Unexpected version format: {version}")
-        base_version = match.group(1)
-        if is_nightly:
-            date = datetime.datetime.now(datetime.timezone.utc)
-            version = f"{base_version}.dev{date:%Y%m%d%H%M}"
-            dist_pkg_name = _rewrite_nightly_pyproject(build_path, package_name)
-        else:
-            version = f"{base_version}rc{rc_index}"
+        date = datetime.datetime.now(datetime.timezone.utc)
+        version = f"{match.group(1)}.dev{date:%Y%m%d%H%M}"
+        dist_pkg_name = _rewrite_nightly_pyproject(build_path, package_name)
 
     version_path = build_path / package / "src" / "version.py"
     version_contents, subs = re.subn(
         r'^__version__\s*=\s*["\'][^"\']*["\']',
         f'__version__ = "{version}"',
         version_path.read_text(),
-        count=1,
         flags=re.MULTILINE,
     )
     if subs != 1:
@@ -227,7 +133,7 @@ def build_and_save_output(build_path, dist_path, dist_pkg_name, version):
     return whl_path
 
 
-def build(root_path, is_nightly=False, rc_index=None):
+def build(root_path, is_nightly=False):
     """Stage sources into a temporary build dir and emit wheel + sdist."""
     build_path = root_path / build_directory
     dist_path = root_path / dist_directory
@@ -240,7 +146,7 @@ def build(root_path, is_nightly=False, rc_index=None):
         version_file = build_path / package / "src" / "version.py"
         current_version = read_version(version_file)
         dist_pkg_name, version = export_version_string(
-            build_path, current_version, is_nightly, rc_index
+            build_path, current_version, is_nightly
         )
         return build_and_save_output(
             build_path, dist_path, dist_pkg_name, version
@@ -278,13 +184,8 @@ if __name__ == "__main__":
         action="store_true",
         help="Whether to generate nightly wheel file.",
     )
-    parser.add_argument(
-        "--rc",
-        type=int,
-        help="Specify `[0-9]` when generating RC wheels.",
-    )
     args = parser.parse_args()
     root_path = pathlib.Path(__file__).parent.resolve()
-    whl_path = build(root_path, args.nightly, args.rc)
+    whl_path = build(root_path, args.nightly)
     if whl_path and args.install:
         install_whl(whl_path)
