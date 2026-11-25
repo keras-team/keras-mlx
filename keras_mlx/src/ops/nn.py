@@ -67,7 +67,7 @@ def relu6(x):
 
 
 def sigmoid(x):
-    x = convert_to_tensor(x)
+    x = promote_to_float(x)
     return mx.sigmoid(x)
 
 
@@ -163,8 +163,6 @@ def elu(x, alpha=1.0):
     # exp branch like jax.
     xneg = mx.minimum(0, x)
     xpos = mx.maximum(x, 0)
-    # mx.expm1 is within ~35 ulp on Metal for x <= 0. The expm1 op is tighter
-    # but its select doubles the eager and grad time.
     return alpha * mx.expm1(xneg) + xpos
 
 
@@ -448,7 +446,30 @@ def grouped_conv3d(inputs, kernel, groups, **conv_args):
     return mx.concatenate(outputs, axis=-1)
 
 
-def _conv_general(inputs, kernel, groups, **conv_args):
+def _conv_general(
+    inputs, kernel, strides, padding, dilation_rate, groups, transpose=False
+):
+    # Metal depthwise conv1d ignores end padding and reads past the row, and a
+    # flipped conv's input grad hits it at lo = K - 1. Remove once mlx fixes it.
+    if (
+        inputs.ndim == 3
+        and padding != 0
+        and groups == inputs.shape[-1] == kernel.shape[0]
+        and strides == (1,)
+        and dilation_rate == (1,)
+    ):
+        (lo,), (hi,) = padding
+        if lo != hi and lo == (kernel.shape[1] - 1 if transpose else 0):
+            inputs = mx.pad(inputs, [(0, 0), (lo, hi), (0, 0)])
+            padding = 0
+    # conv_transpose dilates the input by the strides and flips the kernel.
+    conv_args = dict(
+        stride=1 if transpose else strides,
+        padding=padding,
+        kernel_dilation=dilation_rate,
+        input_dilation=strides if transpose else 1,
+        flip=transpose,
+    )
     # mlx only supports groups in 1D and 2D convolutions.
     if inputs.ndim == 5 and groups > 1:
         return grouped_conv3d(inputs, kernel, groups, **conv_args)
@@ -503,14 +524,7 @@ def conv(
     groups = channels // kernel_in_channels
 
     result = _conv_general(
-        inputs,
-        kernel,
-        groups,
-        stride=strides,
-        padding=mlx_padding,
-        kernel_dilation=dilation_rate,
-        input_dilation=1,
-        flip=False,
+        inputs, kernel, strides, mlx_padding, dilation_rate, groups
     )
     if data_format == "channels_first":
         result = result.transpose(0, -1, *range(1, result.ndim - 1))
@@ -562,12 +576,10 @@ def depthwise_conv(
     result = _conv_general(
         inputs,
         kernel,
+        strides,
+        mlx_padding,
+        dilation_rate,
         feature_group_count,
-        stride=strides,
-        padding=mlx_padding,
-        kernel_dilation=dilation_rate,
-        input_dilation=1,
-        flip=False,
     )
     if data_format == "channels_first":
         result = result.transpose(0, -1, *range(1, result.ndim - 1))
@@ -649,15 +661,14 @@ def conv_transpose(
         )
     groups = channels // kernel_in_channels
 
-    result = mx.conv_general(
+    result = _conv_general(
         inputs,
         kernel,
-        stride=1,  # stride is handled by input_dilation
-        padding=mlx_padding,
-        kernel_dilation=dilation_rate,
-        input_dilation=strides,
-        groups=groups,
-        flip=True,
+        strides,
+        mlx_padding,
+        dilation_rate,
+        groups,
+        transpose=True,
     )
 
     if data_format == "channels_first":
@@ -759,9 +770,7 @@ def sparse_categorical_crossentropy(target, output, from_logits=False, axis=-1):
         and output.dtype in (mx.float16, mx.bfloat16, mx.float32)
         and output.size > 0
     ):
-        # Up to mlx 0.32.4 its Metal gradient is wrong for logits that are
-        # not row contiguous.
-        loss = mx.fast.cross_entropy(mx.contiguous(output), target)
+        loss = mx.fast.cross_entropy(output, target)
         return mx.where(valid, loss, 0).astype(output.dtype)
 
     if from_logits:
@@ -866,7 +875,10 @@ def _canonical_axes(x, axis):
 
 def _normalization_operands(x, weights, axis):
     # The mlx kernels normalize the last axis with 1-D weights, so the axes
-    # are moved to the end and flattened. None means a weight does not match.
+    # are moved to the end and flattened. None falls back to the composed op.
+    if x.size == 0:
+        # Metal fast norm vjps break on empty input, remove once mlx fixes it.
+        return None
     size = math.prod(x.shape[a] for a in axis)
     flat_weights = []
     for weight in weights:
