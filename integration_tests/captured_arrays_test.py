@@ -16,6 +16,20 @@ class KeepsCallTensor(keras.layers.Layer):
         return self.last
 
 
+class FailsOnce(KeepsCallTensor):
+    fail = False
+
+    def call(self, x):
+        result = super().call(x)
+        if self.fail:
+            raise RuntimeError("Failing once.")
+        return result
+
+
+@pytest.mark.skipif(
+    "MLX_DISABLE_COMPILE" in os.environ,
+    reason="Nothing is traced with compilation turned off.",
+)
 class CapturedArraysTest(testing.TestCase):
     def _make_model(self):
         x = np.random.RandomState(0).uniform(size=(64, 8)).astype("float32")
@@ -51,10 +65,28 @@ class CapturedArraysTest(testing.TestCase):
         model.train_on_batch(x[:16], y[:16])
         self.assertAllClose(model.predict_on_batch(x), model(x))
 
-    @pytest.mark.skipif(
-        "MLX_DISABLE_COMPILE" in os.environ,
-        reason="The step runs untraced with compilation turned off.",
-    )
+    def test_call_tensor_in_a_shared_layer(self):
+        x = np.ones((8, 8), dtype="float32")
+        inputs = keras.Input((8,))
+        hidden = KeepsCallTensor()(inputs)
+        encoder = keras.Model(inputs, hidden)
+        autoencoder = keras.Model(inputs, keras.layers.Dense(8)(hidden))
+        autoencoder.compile(optimizer="sgd", loss="mse", jit_compile=True)
+        encoder.compile(jit_compile=True)
+        autoencoder.train_on_batch(x, x)
+        self.assertAllClose(encoder.predict_on_batch(x), x * 2)
+
+    def test_retrace_after_a_failing_trace(self):
+        x = np.ones((8, 8), dtype="float32")
+        layer = FailsOnce()
+        model = keras.Sequential([keras.Input((8,)), layer])
+        model.compile(jit_compile=True)
+        layer.fail = True
+        with self.assertRaisesRegex(RuntimeError, "Failing once."):
+            model.predict_on_batch(x)
+        layer.fail = False
+        self.assertAllClose(model.predict_on_batch(x), x * 2)
+
     def test_arrays_are_evaluated_once_per_trace(self):
         model, _, x = self._make_model()
         with mock.patch.object(
