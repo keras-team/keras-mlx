@@ -2,6 +2,7 @@
 
 import mlx.core as mx
 import numpy as np
+from absl.testing import parameterized
 
 from keras import ops
 from keras.src import testing
@@ -39,3 +40,18 @@ class MetalKernelsTest(testing.TestCase):
         inputs = mx.zeros((0, 8, 3))
         grad = mx.grad(lambda k: ops.conv(inputs, k).sum())(mx.ones((2, 3, 4)))
         self.assertAllEqual(grad, np.zeros((2, 3, 4)))
+
+    @parameterized.product(
+        normalization=(
+            lambda x, w: ops.layer_normalization(x, gamma=w, beta=w),
+            lambda x, w: ops.rms_normalization(x, scale=w),
+        ),
+        shape=((0, 7), (4, 0)),
+    )
+    def test_normalization_weight_gradient_of_empty_input(
+        self, normalization, shape
+    ):
+        x = mx.zeros(shape)
+        weights = mx.ones((shape[-1],))
+        gradient = mx.grad(lambda w: mx.sum(normalization(x, w)))(weights)
+        self.assertAllEqual(gradient, np.zeros(shape[-1]))
