@@ -1,12 +1,5 @@
 # Tests that are known not to pass with the mlx backend.
 # Each line is one full pytest node id, matched exactly.
-keras/src/backend/common/variables_test.py::VariablePropertiesTest::test_standardize_dtype_complex128
-keras/src/backend/common/variables_test.py::VariablePropertiesTest::test_standardize_dtype_float8_e4m3fn
-keras/src/backend/common/variables_test.py::VariablePropertiesTest::test_standardize_dtype_float8_e5m2
-# 64-bit dtypes are capped to 32 bits. keras skips these for jax only.
-keras/src/backend/common/variables_test.py::VariablePropertiesTest::test_standardize_dtype_float64
-keras/src/backend/common/variables_test.py::VariablePropertiesTest::test_standardize_dtype_int64
-keras/src/backend/common/variables_test.py::VariablePropertiesTest::test_standardize_dtype_uint64
 keras/src/callbacks/tensorboard_test.py::TestTensorBoardV2::test_tensorboard_non_blocking
 keras/src/layers/core/dense_test.py::DenseTest::test_float8_reads_its_dtype_policy_map_entry
 keras/src/layers/core/dense_test.py::DenseTest::test_quantize_dtype_argument_float8
