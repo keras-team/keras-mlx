@@ -123,3 +123,62 @@ jobs:
           if [ -n "$issue" ]; then
             gh issue close "$issue" --comment "The nightly run passed again: $RUN_URL"
           fi
+
+  check_commits:
+    name: Check recent commits
+    if: >-
+      github.repository == 'keras-team/keras-mlx' &&
+      github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    outputs:
+      has_recent_commits: ${{ steps.check.outputs.has_recent_commits }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: check
+        env:
+          TARGET_SHA: ${{ github.sha }}
+        run: |
+          # Check for commits in the last 25 hours (1 hour margin).
+          if [ -z "$(git rev-list --after="25 hours" "$TARGET_SHA")" ]; then
+            echo "has_recent_commits=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_recent_commits=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  nightly:
+    name: Build and publish nightly to PyPI
+    needs: [check_commits, tests]
+    if: >-
+      github.repository == 'keras-team/keras-mlx' &&
+      github.ref == 'refs/heads/main' &&
+      needs.tests.result == 'success' &&
+      needs.check_commits.result == 'success' &&
+      (github.event_name == 'workflow_dispatch' ||
+      needs.check_commits.outputs.has_recent_commits == 'true')
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip setuptools
+          pip install build twine
+      - name: Build wheel and sdist
+        run: |
+          python pip_build.py --nightly
+          twine check dist/*
+      - name: Publish Keras MLX Nightly to PyPI
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+        with:
+          verbose: true
