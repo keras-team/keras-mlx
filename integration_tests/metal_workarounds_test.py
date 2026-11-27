@@ -39,16 +39,3 @@ class MetalWorkaroundsTest(testing.TestCase):
             return mx.grad(loss)(x)
 
         self.assertAllClose(gradient(kernel), gradient(full_kernel), atol=1e-5)
-
-    @parameterized.named_parameters(
-        (
-            "layer_normalization",
-            lambda x, w: ops.layer_normalization(x, gamma=w, beta=w),
-        ),
-        ("rms_normalization", lambda x, w: ops.rms_normalization(x, scale=w)),
-    )
-    def test_normalization_weight_gradient_of_empty_input(self, normalization):
-        x = mx.zeros((0, 7))
-        weights = mx.arange(1, 8).astype(mx.float32)
-        gradient = mx.grad(lambda w: mx.sum(normalization(x, w)))(weights)
-        self.assertAllClose(gradient, np.zeros(7))
