@@ -25,6 +25,20 @@ class ListInputsTest(testing.TestCase):
         self.assertDType(ops.add([1.5, 2.5], [1, 2]), "float32")
         self.assertDType(ops.fmax([1, 2], 1.5), "float32")
 
+    @parameterized.named_parameters(
+        ("list", []),
+        ("tuple", ()),
+        ("nested_list", [[]]),
+        ("nested_lists", [[], []]),
+        ("tensor", np.zeros((0, 3), "float32")),
+    )
+    def test_sum_empty(self, x):
+        for axis in (None, 0):
+            result = ops.sum(x, axis=axis)
+            expected = np.sum(np.asarray(x, "float32"), axis=axis)
+            self.assertAllClose(result, expected)
+            self.assertDType(result, "float32")
+
 
 class VariableArrayTest(testing.TestCase):
     def test_no_copy_with_dtype_change_raises(self):

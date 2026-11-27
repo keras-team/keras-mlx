@@ -770,11 +770,6 @@ def unstack(x, num=None, axis=0):
     return list(_unstack_leading(x))
 
 
-def random_seed_dtype():
-    # mlx random seed uses uint32.
-    return "uint32"
-
-
 def reverse_sequence(xs, axis=0):
     xs = convert_to_tensor(xs)
     indices = mx.arange(xs.shape[axis] - 1, -1, -1)

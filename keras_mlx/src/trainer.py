@@ -1,5 +1,6 @@
 import itertools
 import warnings
+import weakref
 
 import mlx.core as mx
 import numpy as np
@@ -39,6 +40,11 @@ def _replica_group():
     if dist.num_processes == 1:
         return None
     return mx.distributed.init()
+
+
+# Arrays layers picked up in a trace, global since layers can be shared.
+# Weak values drop dead arrays, so no id is reused.
+_TRACE_ARRAYS = weakref.WeakValueDictionary()
 
 
 def _with_tracing_flag(step):
@@ -469,15 +475,13 @@ class Trainer(BaseTrainer):
 
         return iterator_step
 
-    def _eval_captured_arrays(self):
+    def _captured_arrays(self):
         # Lazy arrays outside variables, like adapt() state or the constants
-        # of a functional graph, look uncaptured to mx.compile. Callers run
-        # this before their early return, so a later adapt() is seen.
-        captured = []
+        # of a functional graph, look uncaptured to mx.compile.
+        captured = {}
         for layer in self._flatten_layers():
             # The arrays can sit inside list or dict attributes.
             values = tree.flatten(vars(layer))
-            captured.extend(values)
             functions = [v for v in values if isinstance(v, Function)]
             if isinstance(layer, Function):
                 functions.append(layer)
@@ -485,15 +489,37 @@ class Trainer(BaseTrainer):
                 # The graph keeps eager tensors passed to its ops.
                 for nodes in function._nodes_by_depth.values():
                     for node in nodes:
-                        captured.extend(node.arguments._flat_arguments)
-        captured = [v for v in captured if isinstance(v, mx.array)]
-        if captured:
-            mx.eval(*captured)
+                        values.extend(node.arguments._flat_arguments)
+            for value in values:
+                if isinstance(value, mx.array):
+                    captured[id(value)] = value
+        return captured
+
+    def _eval_captured_arrays(self, captured):
+        mx.eval(*(v for k, v in captured.items() if k not in _TRACE_ARRAYS))
+
+    def _record_trace_arrays(self, before):
+        # Arrays a layer kept from a trace can be tracers, which mx.eval
+        # rejects in later traces.
+        for key, value in self._captured_arrays().items():
+            if key not in before:
+                _TRACE_ARRAYS[key] = value
 
     def _compile_step(self, step):
         if self.run_eagerly or not self.jit_compile:
             return step
-        compiled = mx.compile(_with_tracing_flag(step))
+        flagged_step = _with_tracing_flag(step)
+
+        def step_with_evaluated_arrays(state, data):
+            # Runs on every trace. A later adapt() is seen on the next trace.
+            before = self._captured_arrays()
+            self._eval_captured_arrays(before)
+            try:
+                return flagged_step(state, data)
+            finally:
+                self._record_trace_arrays(before)
+
+        compiled = mx.compile(step_with_evaluated_arrays)
 
         def compiled_step(state, data):
             if self.jit_compile:
@@ -512,7 +538,6 @@ class Trainer(BaseTrainer):
         return compiled_step
 
     def make_train_function(self, force=False):
-        self._eval_captured_arrays()
         if self.train_function is not None and not force:
             return
         self._broadcast_weights()
@@ -522,7 +547,6 @@ class Trainer(BaseTrainer):
         self.train_function = step_function
 
     def make_test_function(self, force=False):
-        self._eval_captured_arrays()
         if self.test_function is not None and not force:
             return
         self._broadcast_weights()
@@ -532,7 +556,6 @@ class Trainer(BaseTrainer):
         self.test_function = step_function
 
     def make_predict_function(self, force=False):
-        self._eval_captured_arrays()
         if self.predict_function is not None and not force:
             return
 
